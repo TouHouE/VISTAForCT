@@ -25,7 +25,7 @@ from monai.transforms import (
     ScaleIntensityRanged,
     Spacingd,
 )
-
+from monai import transforms as MF
 
 class Sampler(torch.utils.data.Sampler):
     def __init__(self, dataset, num_replicas=None, rank=None, shuffle=True, make_even=True):
@@ -105,6 +105,7 @@ def get_loader(args):
             EnsureChannelFirstd(keys=["image", "label"]),
             Orientationd(keys=["image", "label"], axcodes="RAS"),
             Spacingd(keys=["image", "label"], pixdim=(1.5, 1.5, 1.5), mode=("bilinear", "nearest")),
+            MF.Resized(keys=["image", "label"], spatial_size=(512, 512, 320), mode=("bilinear", "nearest")),
             ScaleIntensityRanged(
                 keys=["image"], a_min=args.a_min, a_max=args.a_max, b_min=args.b_min, b_max=args.b_max, clip=True
             ),
@@ -118,6 +119,7 @@ def get_loader(args):
             EnsureChannelFirstd(keys=["image", "label"]),
             Orientationd(keys=["image", "label"], axcodes="RAS"),
             Spacingd(keys=["image", "label"], pixdim=(1.5, 1.5, 1.5), mode=("bilinear", "nearest")),
+            MF.Resized(keys=["image", "label"], spatial_size=(512, 512, 320), mode=("bilinear", "nearest")),
             ScaleIntensityRanged(
                 keys=["image"], a_min=args.a_min, a_max=args.a_max, b_min=args.b_min, b_max=args.b_max, clip=True
             ),

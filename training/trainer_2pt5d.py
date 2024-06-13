@@ -25,7 +25,7 @@ from monai.metrics import compute_dice
 from tensorboardX import SummaryWriter
 from torch.cuda.amp import GradScaler, autocast
 from utils.utils import AverageMeter, distributed_all_gather
-
+import wandb
 
 def apply_coords_torch(coords, original_size, sam_image_size) -> np.ndarray:
     """
@@ -129,7 +129,7 @@ def prepare_sam_training_input(inputs, labels, args, model):
         unique_labels = unique_labels[: args.num_prompt]
 
     # add 4 background labels to every batch
-    background_labels = list(set([i for i in range(1, 105)]) - set(unique_labels.cpu().numpy()))
+    background_labels = list(set([i for i in range(1, args.nc)]) - set(unique_labels.cpu().numpy()))
     random.shuffle(background_labels)
     unique_labels = torch.cat([unique_labels, torch.tensor(background_labels[:4]).cuda(args.rank)])
 
@@ -175,8 +175,6 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
         inputs_l = batch_data["image"]
         labels_l = batch_data["label"]
         # TODO: we only support batch_size = 1 for data loader.
-        inputs_l = inputs_l.squeeze()
-        labels_l = labels_l.squeeze()
         n_z_before_pad = labels_l.shape[-1]
 
         n_slice = args.roi_z_iter
@@ -190,10 +188,12 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
             # Return random integers from `low` (inclusive) to `high` (exclusive).
             start_idx = int(np.random.randint(low=n_slice // 2, high=(n_slice // 2 + n_z_before_pad)))
 
-            inputs = inputs_l[..., start_idx - n_slice // 2 : start_idx + n_slice // 2 + 1].permute(2, 0, 1)
+            left_ptr = start_idx - n_slice // 2
+            right_ptr = start_idx + n_slice // 2 + 1
+            inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
 
             # we only need the label for the center slice
-            labels = labels_l[..., start_idx - n_slice // 2 : start_idx + n_slice // 2 + 1][..., n_slice // 2]
+            labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
 
             data, target, target_original, skip = prepare_sam_training_input(
                 inputs.cuda(args.rank), labels.cuda(args.rank), args, model
@@ -246,7 +246,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
     return run_loss.avg
 
 
-def train_epoch_iterative(model, loader, optimizer, scaler, epoch, loss_func, args):
+def train_epoch_iterative(model, loader, optimizer, scaler, epoch, loss_func, run, args):
     model.train()
     start_time = time.time()
     run_loss = AverageMeter()
@@ -257,8 +257,8 @@ def train_epoch_iterative(model, loader, optimizer, scaler, epoch, loss_func, ar
         inputs_l = batch_data["image"]
         labels_l = batch_data["label"]
         # TODO: we only support batch_size = 1 for data loader.
-        inputs_l = inputs_l.squeeze()
-        labels_l = labels_l.squeeze()
+        inputs_l = inputs_l
+        labels_l = labels_l
         n_z_before_pad = labels_l.shape[-1]
 
         n_slice = args.roi_z_iter
@@ -267,14 +267,16 @@ def train_epoch_iterative(model, loader, optimizer, scaler, epoch, loss_func, ar
         inputs_l = F.pad(inputs_l, pd, "constant", 0)
         labels_l = F.pad(labels_l, pd, "constant", 0)
         _loss = torch.tensor(0.0).cuda(args.rank)
+
         for _k in range(min(args.num_patch, n_z_before_pad)):
             # Return random integers from `low` (inclusive) to `high` (exclusive).
             start_idx = int(np.random.randint(low=n_slice // 2, high=(n_slice // 2 + n_z_before_pad)))
-
-            inputs = inputs_l[..., start_idx - n_slice // 2 : start_idx + n_slice // 2 + 1].permute(2, 0, 1)
+            left_ptr = start_idx - n_slice // 2
+            right_ptr = start_idx + n_slice // 2 + 1
+            inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
 
             # we only need the label for the center slice
-            labels = labels_l[..., start_idx - n_slice // 2 : start_idx + n_slice // 2 + 1][..., n_slice // 2]
+            labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
 
             data, target, target_original, skip = prepare_sam_training_input(
                 inputs.cuda(args.rank), labels.cuda(args.rank), args, model
@@ -363,11 +365,18 @@ def train_epoch_iterative(model, loader, optimizer, scaler, epoch, loss_func, ar
         else:
             run_loss.update(_loss.item(), n=args.num_patch)
         if args.rank == 0:
+            dur = time.time() - start_time
             print(
                 "Epoch {}/{} {}/{}".format(epoch, args.max_epochs, idx, len(loader)),
                 "loss: {:.4f}".format(run_loss.avg),
-                "time {:.2f}s".format(time.time() - start_time),
+                "time {:.2f}s".format(dur),
             )
+            if run is not None:
+                run.log({
+                    'train iter loss': run_loss.avg,
+                    'train iter time': dur,
+                })
+
         start_time = time.time()
     for param in model.parameters():
         param.grad = None
@@ -375,7 +384,7 @@ def train_epoch_iterative(model, loader, optimizer, scaler, epoch, loss_func, ar
 
 
 def prepare_sam_test_input(inputs, labels, args, previous_pred=None):
-    unique_labels = torch.tensor([i for i in range(1, 105)]).cuda(args.rank)
+    unique_labels = torch.tensor([i for i in range(1, args.nc)]).cuda(args.rank)
 
     # preprocess make the size of lable same as high_res_logit
     batch_labels = torch.stack([labels == unique_labels[i] for i in range(len(unique_labels))], dim=0).float()
@@ -400,7 +409,7 @@ def prepare_sam_test_input(inputs, labels, args, previous_pred=None):
 
 def prepare_sam_val_input_cp_only(inputs, labels, args):
     # Don't exclude background in val but will ignore it in metric calculation
-    unique_labels = torch.tensor([i for i in range(1, 105)]).cuda(args.rank)
+    unique_labels = torch.tensor([i for i in range(1, args.nc)]).cuda(args.rank)
 
     # preprocess make the size of lable same as high_res_logit
     batch_labels = torch.stack([labels == unique_labels[i] for i in range(len(unique_labels))], dim=0).float()
@@ -418,6 +427,7 @@ def val_epoch(model, loader, epoch, acc_func, args, iterative=False, post_label=
     run_acc = AverageMeter()
     start_time = time.time()
     with torch.no_grad():
+
         for idx, batch_data in enumerate(loader):
             # only take 1 batch
             inputs_l = batch_data["image"]
@@ -425,9 +435,6 @@ def val_epoch(model, loader, epoch, acc_func, args, iterative=False, post_label=
             labels_l.shape[-1]
             # assert n_z_before_pad >= args.num_patch_val + args.roi_z_iter
 
-            # TODO: we only support batch_size = 1 for data loader.
-            inputs_l = inputs_l.squeeze()
-            labels_l = labels_l.squeeze()
 
             n_slice = args.roi_z_iter
             # pad the z direction, so we can easily extract 2.5D input and predict labels for the center slice
@@ -439,14 +446,16 @@ def val_epoch(model, loader, epoch, acc_func, args, iterative=False, post_label=
 
             acc_sum_total = 0.0
             not_nans_total = 0.0
+            start = n_z_after_pad // 2 - args.num_patch_val // 2
+            end = n_z_after_pad // 2 + args.num_patch_val // 2
             # We only loop the center args.num_patch_val slices to save val time
-            for start_idx in range(
-                n_z_after_pad // 2 - args.num_patch_val // 2, n_z_after_pad // 2 + args.num_patch_val // 2
-            ):
-                inputs = inputs_l[..., start_idx - n_slice // 2 : start_idx + n_slice // 2 + 1].permute(2, 0, 1)
+            for start_idx in range(start, end):
+                left_ptr = start_idx - n_slice // 2
+                right_ptr = start_idx + n_slice // 2 + 1
+                inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
 
                 # we only need the label for the center slice
-                labels = labels_l[..., start_idx - n_slice // 2 : start_idx + n_slice // 2 + 1][..., n_slice // 2]
+                labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
 
                 data, target, _ = prepare_sam_val_input_cp_only(inputs.cuda(args.rank), labels.cuda(args.rank), args)
 
@@ -460,7 +469,7 @@ def val_epoch(model, loader, epoch, acc_func, args, iterative=False, post_label=
                 acc_batch = compute_dice(y_pred=y_pred, y=target)
                 acc_sum, not_nans = (
                     torch.nansum(acc_batch).item(),
-                    104 - torch.sum(torch.isnan(acc_batch).float()).item(),
+                    args.nc - 1 - torch.sum(torch.isnan(acc_batch).float()).item(),
                 )
                 acc_sum_total += acc_sum
                 not_nans_total += not_nans
@@ -518,10 +527,12 @@ def run_training(
     post_pred=None,
 ):
     writer = None
+    run = None
     if args.logdir is not None and args.rank == 0:
         writer = SummaryWriter(log_dir=args.logdir)
         if args.rank == 0:
             print("Writing Tensorboard logs to ", args.logdir)
+        run = wandb.init(project=args.project, name=args.name, config=args)
     scaler = None
     if args.amp:
         scaler = GradScaler()
@@ -536,9 +547,15 @@ def run_training(
         epoch_time = time.time()
         if args.rank == 0:
             if scheduler is not None:
-                print("Current lr:", scheduler.get_last_lr())
+                lr = scheduler.get_last_lr()
             else:
-                print("Current lr:", optimizer.param_groups[0]["lr"])
+                lr = optimizer.param_groups[0]["lr"]
+            print("Current lr:", lr)
+            if run is not None:
+                run.log({
+                    'lr': lr,
+                    'epoch': epoch
+                })
 
         if args.label_prompt and args.point_prompt:
             if epoch < args.label_prompt_warm_up_epoch:
@@ -569,7 +586,9 @@ def run_training(
                 if args.rank == 0:
                     print("Iterative Training: Reuse image embedding!")
                 train_loss = train_epoch_iterative(
-                    model, train_loader, optimizer, scaler=scaler, epoch=epoch, loss_func=loss_func, args=args
+                    model, train_loader, optimizer,
+                    scaler=scaler, epoch=epoch, loss_func=loss_func,
+                    run=run, args=args
                 )
             else:
                 if args.rank == 0:
@@ -587,8 +606,14 @@ def run_training(
                 "loss: {:.4f}".format(train_loss),
                 "time {:.2f}s".format(time.time() - epoch_time),
             )
-        if args.rank == 0 and writer is not None:
-            writer.add_scalar("train_loss", train_loss, epoch)
+        if args.rank == 0:
+            if writer is not None:
+                writer.add_scalar("train_loss", train_loss, epoch)
+            if run is not None:
+                run.log({
+                    'train_loss': train_loss,
+                    'epoch': epoch
+                })
 
         if (epoch + 1) % args.val_every == 0:
             if args.distributed:
@@ -623,6 +648,12 @@ def run_training(
                 )
                 if writer is not None:
                     writer.add_scalar("val_acc", val_avg_acc, epoch)
+                if run is not None:
+                    run.log({
+                        'val_acc': val_avg_acc,
+                        'epoch': epoch
+                    })
+
                 if val_avg_acc > val_acc_max:
                     print("new best ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
                     val_acc_max = val_avg_acc
