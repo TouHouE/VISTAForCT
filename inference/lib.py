@@ -36,15 +36,18 @@ class Processor:
         output_cand = self.output_method(output_cand)
         return torch.cat(output_cand, 1)
 
-    def __call__(self, path, stage='prepare') -> torch.Tensor:
+    def __call__(self, path, need_affine=False) -> torch.Tensor:
         if (img_folder := self.args.image_folder) is not None:
             path = os.path.join(img_folder, path)
-
         image = self.loader(path)
+        if need_affine:
+            am = image.affine
         image = self.channeler(image)
         image = self.axior(image)
         # image = self.spacier(image)
         # image = self.resizer(image)
         image = self.scaler(image)
         image = F.pad(image, self.pad_size, 'constant', 0)
+        if need_affine:
+            return image, am
         return image

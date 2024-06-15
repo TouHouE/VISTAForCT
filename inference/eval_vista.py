@@ -78,11 +78,14 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
     print(f'{args}')
     for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list)):
         image_path = dpack['image']
-        image = processor(image_path)
+        image, affine = processor(image_path, True)
         image = image.cuda()
         mask3d: MetaTensor = other.vista_slice_inference(
             image, model, None, n_z_slices=27,
-            labels=labels, computeEmbedding=False)
+            labels=labels, computeEmbedding=False,
+            class_prompts=None, point_prompts=None, cached_data=True,
+            original_affine=affine
+        )
         saver(mask3d, mask3d.meta)
         # torch.save(mask3d, )
         table[f'pred_{idx}'] = image_path
