@@ -136,7 +136,7 @@ if __name__ == '__main__':
     parser.add_argument('--b_min', default=-1)
     parser.add_argument('--b_max', default=1)
     parser.add_argument('--clip', action='store_true', default=True)
-    parser.add_argument('--debug', default=-1)
+    parser.add_argument('--debug', default=-1, type=int)
     args = parser.parse_args()
     make_sure_folder_exist(args)
     main(args)
