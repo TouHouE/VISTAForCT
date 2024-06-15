@@ -316,7 +316,7 @@ def iterate_all(
         pred_idx = start_idx - (n_z_slices // 2) if not cachedEmbedding else start_idx
         # 1 x 11 x H x W x (S + 2z)
         pred_volume[0, unique_labels, ..., pred_idx] = y_pred
-    print('pred_volume.shape before argmax and unsqueeze: 'pred_volume.shape)
+    print('pred_volume.shape before argmax and unsqueeze: ', pred_volume.shape)
     pred_volume = pred_volume.argmax(1).unsqueeze(1).cpu()
     pred_volume = pred_volume.float()
 
