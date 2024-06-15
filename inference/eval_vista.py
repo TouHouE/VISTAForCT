@@ -83,7 +83,8 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
         mask3d: MetaTensor = other.vista_slice_inference(
             image, model, None, n_z_slices=27,
             labels=labels, computeEmbedding=False,
-            class_prompts=None, point_prompts=None, cached_data=False,
+            class_prompts=None, point_prompts=None,
+            cached_data=False, cachedEmbedding=False,
             original_affine=affine
         )
         saver(mask3d, mask3d.meta)
