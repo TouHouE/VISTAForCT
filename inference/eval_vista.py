@@ -89,6 +89,7 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
             cached_data=False, cachedEmbedding=False,
             original_affine=affine
         )
+        print(f'final shape: {mask3d.shape}')
         saver(mask3d, mask3d.meta)
         # torch.save(mask3d, )
         table[f'pred_{idx}'] = image_path
