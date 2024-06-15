@@ -31,6 +31,20 @@ class VISTAPOINT2PT5(TaskConfig):
     def init(self, name: str, model_dir: str, conf: Dict[str, str], planner: Any, **kwargs):
         super().init(name, model_dir, conf, planner, **kwargs)
 
+        """
+            self.labels = {
+            "1": "RightAtrium",
+            "2": "RightVentricle",
+            "3": "LeftAtrium",
+            "4": "LeftVentricle",
+            "5": "MyocardiumLV",
+            "6": "Aorta",
+            "7": "Coronaries8",
+            "8": "Fat",
+            "9": "Bypass",
+            "10": "Plaque"
+        }
+        """
         # Labels
         self.labels = {
             "spleen": 1,
