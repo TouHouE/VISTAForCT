@@ -10,6 +10,7 @@ from inference.lib import Processor
 from inference import other
 import json
 from tqdm.auto import tqdm
+from monai.data import MetaTensor
 labels = [
         'RightAtrium',
         'RightVentricle',
@@ -53,6 +54,7 @@ def load_model(ckpt_path, model: nn.Module) -> nn.Module:
 
 @torch.no_grad()
 def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, args) -> list[torch.Tensor]:
+    global labels
     def _one_slice(_model: nn.Module, _slice_image) -> torch.Tensor:
         _slice_pred = _model(_slice_image)
         return _slice_pred[0]['high_res_logits']
@@ -72,18 +74,20 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
     model.eval()
     model.cuda()
     table = dict()
-
+    saver = MF.SaveImage(args.output_folder, output_postfix='pred', output_dtype=torch.uint8)
     try:
         for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list)):
             image_path = dpack['image']
             image = processor(image_path)
             image = image.cuda()
-            mask3d = other.vista_slice_inference(
+            mask3d: MetaTensor = other.vista_slice_inference(
                 image, model, None, n_z_slices=27,
                 labels=labels, computeEmbedding=False)
-
-            torch.save(mask3d, os.path.join(args.output_folder, f'pred_{idx}.pt'))
+            saver(mask3d, mask3d.meta)
+            # torch.save(mask3d, )
             table[f'pred_{idx}'] = image_path
+            if args.debug:
+                break
         # for loop end
         with open(os.path.join(args.output_folder, 'table.json'), 'w+') as jout:
             json.dump(table, jout)
@@ -130,6 +134,7 @@ if __name__ == '__main__':
     parser.add_argument('--b_min', default=-1)
     parser.add_argument('--b_max', default=1)
     parser.add_argument('--clip', action='store_true', default=True)
+    parser.add_argument('--debug', action='store_true', default=False)
     args = parser.parse_args()
     make_sure_folder_exist(args)
     main(args)
