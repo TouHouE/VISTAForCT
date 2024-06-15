@@ -79,7 +79,7 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
     for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list)):
         image_path = dpack['image']
         image, affine = processor(image_path, True)
-        image = image.cuda()
+        image = image.cuda().unsqueeze(0)
         mask3d: MetaTensor = other.vista_slice_inference(
             image, model, 'cuda', n_z_slices=27,
             labels=labels, computeEmbedding=False,
