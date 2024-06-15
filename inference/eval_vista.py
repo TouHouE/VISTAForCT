@@ -4,7 +4,7 @@ from typing import Optional
 from collections import OrderedDict
 import torch
 from torch import nn
-from training.segment_anything import sam_model_registry
+from training.vista_2pt5d.model import sam_model_registry
 from monai import transforms as MF
 from inference.lib import Processor
 import json
