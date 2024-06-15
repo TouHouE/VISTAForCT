@@ -35,7 +35,8 @@ def load_model(ckpt_path, model: nn.Module) -> nn.Module:
             weight_dict[k] = v
     else:
         weight_dict = old_state_dict.copy()
-    return model.load_state_dict(weight_dict)
+    model.load_state_dict(weight_dict)
+    return model
 
 
 @torch.no_grad()
