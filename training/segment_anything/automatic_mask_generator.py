@@ -10,9 +10,9 @@ import numpy as np
 import torch
 from torchvision.ops.boxes import batched_nms, box_area  # type: ignore
 
-from .modeling import Sam
-from .predictor import SamPredictor
-from .utils.amg import (
+from training.segment_anything.modeling import Sam
+from training.segment_anything.predictor import SamPredictor
+from training.segment_anything.utils.amg import (
     MaskData,
     area_from_rle,
     batch_iterator,
