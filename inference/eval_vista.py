@@ -93,7 +93,7 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
         saver(mask3d.squeeze(0), mask3d.meta)
         # torch.save(mask3d, )
         table[f'pred_{idx}'] = image_path
-        if args.debug > -1 and idx <= args.debug:
+        if args.debug > -1 and idx >= args.debug:
             break
     # for loop end
     with open(os.path.join(args.output_folder, 'table.json'), 'w+') as jout:
