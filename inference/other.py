@@ -318,6 +318,7 @@ def iterate_all(
         pred_volume[0, unique_labels, ..., pred_idx] = y_pred
     print('pred_volume.shape before argmax and unsqueeze: ', pred_volume.shape)
     pred_volume = pred_volume.argmax(1).unsqueeze(1).cpu()
+    print(f'pred_volume.shape become: {pred_volume.shape}')
     pred_volume = pred_volume.float()
 
     if cached_pred is not None:
