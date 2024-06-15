@@ -7,8 +7,20 @@ from torch import nn
 from training.vista_2pt5d.model import sam_model_registry
 from monai import transforms as MF
 from inference.lib import Processor
+from inference import other
 import json
 from tqdm.auto import tqdm
+labels = [
+        'RightAtrium',
+        'RightVentricle',
+        'LeftAtrium',
+        'LeftVentricle',
+        'MyocardiumLV',
+        'Aorta',
+        'Coronaries8',
+        'Fat',
+        'Bypass',
+        'Plaque']
 
 def make_data_pack_list(args):
     json_file = getattr(args, 'json_form', None)
@@ -44,6 +56,19 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
     def _one_slice(_model: nn.Module, _slice_image) -> torch.Tensor:
         _slice_pred = _model(_slice_image)
         return _slice_pred[0]['high_res_logits']
+    def my_method():
+
+        # C, H, W, S -> H, W, S -> H, W, Ns, S' -> Ns, S', H, W
+        slice_group = image[0].unfold(-1, args.roi_z_iter, 1).permute(2, 3, 0, 1)
+        pred_group = list()
+        bar2 = tqdm(slice_group, total=len(slice_group), leave=True)
+        for slice_image in bar2:
+            vista_input, labels_name = processor.prepare_input(slice_image)
+
+            slice_mask_pred = _one_slice(model, vista_input)
+            pred_group.append(slice_mask_pred)
+        return processor.prepare_output(pred_group)
+
     model.eval()
     model.cuda()
     table = dict()
@@ -53,16 +78,9 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
             image_path = dpack['image']
             image = processor(image_path)
             image = image.cuda()
-            # C, H, W, S -> H, W, S -> H, W, Ns, S' -> Ns, S', H, W
-            slice_group = image[0].unfold(-1, args.roi_z_iter, 1).permute(2, 3, 0, 1)
-            pred_group = list()
-            bar2 = tqdm(slice_group, total=len(slice_group), leave=True)
-            for slice_image in bar2:
-                vista_input, labels_name = processor.prepare_input(slice_image)
-
-                slice_mask_pred = _one_slice(model, vista_input)
-                pred_group.append(slice_mask_pred)
-            mask3d = processor.prepare_output(pred_group)
+            mask3d = other.vista_slice_inference(
+                image, model, None, n_z_slices=27,
+                labels=labels, computeEmbedding=False)
 
             torch.save(mask3d, os.path.join(args.output_folder, f'pred_{idx}.pt'))
             table[f'pred_{idx}'] = image_path
@@ -76,7 +94,9 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
         with open(os.path.join(args.output_folder, 'table.json'), 'w+') as jout:
             json.dump(table, jout)
 
+
 def main(args):
+
     model = sam_model_registry[args.vit_type](
         image_size=args.image_size,
         encoder_in_chans=args.roi_z_iter * 3,
