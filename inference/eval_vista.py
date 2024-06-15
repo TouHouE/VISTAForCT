@@ -46,23 +46,35 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
         return _slice_pred[0]['high_res_logits']
     model.eval()
     model.cuda()
+    table = dict()
 
-    for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list)):
-        image_path = dpack['image']
-        image = processor(image_path)
-        image = image.cuda()
-        # C, H, W, S -> H, W, S -> H, W, Ns, S' -> Ns, S', H, W
-        slice_group = image[0].unfold(-1, args.roi_z_iter, 1).permute(2, 3, 0, 1)
-        pred_group = list()
-        for slice_image in slice_group:
-            vista_input, labels_name = processor.prepare_input(slice_image)
+    try:
+        for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list)):
+            image_path = dpack['image']
+            image = processor(image_path)
+            image = image.cuda()
+            # C, H, W, S -> H, W, S -> H, W, Ns, S' -> Ns, S', H, W
+            slice_group = image[0].unfold(-1, args.roi_z_iter, 1).permute(2, 3, 0, 1)
+            pred_group = list()
+            bar2 = tqdm(slice_group, total=len(slice_group), leave=True)
+            for slice_image in bar2:
+                vista_input, labels_name = processor.prepare_input(slice_image)
 
-            slice_mask_pred = _one_slice(model, vista_input)
-            pred_group.append(slice_mask_pred)
-        mask3d = processor.prepare_output(pred_group)
+                slice_mask_pred = _one_slice(model, vista_input)
+                pred_group.append(slice_mask_pred)
+            mask3d = processor.prepare_output(pred_group)
 
-        torch.save(mask3d, os.path.join(args.output_folder, f'pred_{image_path}.pt'))
+            torch.save(mask3d, os.path.join(args.output_folder, f'pred_{idx}.pt'))
+            table[f'pred_{idx}'] = image_path
+        # for loop end
+        with open(os.path.join(args.output_folder, 'table.json'), 'w+') as jout:
+            json.dump(table, jout)
 
+    except Exception as e:
+        import traceback
+        traceback.format_exc()
+        with open(os.path.join(args.output_folder, 'table.json'), 'w+') as jout:
+            json.dump(table, jout)
 
 def main(args):
     model = sam_model_registry[args.vit_type](
