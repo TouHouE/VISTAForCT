@@ -26,7 +26,7 @@ class Processor:
         return vista_input, uni_labels
 
     def prepare_output(self, output_cand):
-        print(output_cand.shape)
+        # print(output_cand.shape)
         output_cand = decollate_batch(output_cand)
         output_cand = self.output_method(output_cand)
         return torch.stack(output_cand, 0)
