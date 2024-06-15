@@ -97,7 +97,7 @@ def generate_point_prompt(batch_labels_, args, points_pos=None, points_neg=None,
 
 
 def prepare_slice_data(image, args):
-    unique_labels = torch.tensor([i for i in range(1, args.nc)]).cuda(args.rank)
+    unique_labels = torch.tensor([i for i in range(1, args.nc)]).cuda()
     labels_prompt = unique_labels.unsqueeze(-1)
     prepare_input = [{'image': image, 'original_size': tuple(image.shape[-2:]), 'labels': labels_prompt}]
 
