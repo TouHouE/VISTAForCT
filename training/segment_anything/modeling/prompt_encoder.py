@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from .common import LayerNorm2d
+from training.segment_anything.modeling.common import LayerNorm2d
 
 
 class PromptEncoder(nn.Module):

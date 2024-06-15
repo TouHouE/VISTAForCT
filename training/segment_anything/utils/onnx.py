@@ -10,8 +10,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from ..modeling import Sam
-from .amg import calculate_stability_score
+from training.segment_anything.modeling import Sam
+from training.segment_anything.utils.amg import calculate_stability_score
 
 
 class SamOnnxModel(nn.Module):

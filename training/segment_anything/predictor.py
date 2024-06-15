@@ -8,9 +8,9 @@ from typing import Optional, Tuple
 
 import numpy as np
 import torch
-from segment_anything.modeling import Sam
+from training.segment_anything.modeling import Sam
 
-from .utils.transforms import ResizeLongestSide
+from training.segment_anything.utils.transforms import ResizeLongestSide
 
 
 class SamPredictor:
