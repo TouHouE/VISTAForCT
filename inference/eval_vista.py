@@ -58,8 +58,10 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
             vista_input, labels_name = processor.prepare_input(slice_image)
 
             slice_mask_pred = _one_slice(model, vista_input)
-            pred_group.append(processor.prepare_output(slice_mask_pred))
-        torch.save(torch.stack(pred_group, 0), os.path.join(args.output_folder, f'pred_{image_path}.pt'))
+            pred_group.append(slice_mask_pred)
+        mask3d = processor.prepare_output(torch.stack(pred_group, dim=1))
+
+        torch.save(mask3d, os.path.join(args.output_folder, f'pred_{image_path}.pt'))
 
 
 def main(args):
