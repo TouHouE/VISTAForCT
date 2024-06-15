@@ -87,15 +87,16 @@ def vista_slice_inference(
     labels = kwargs.pop("labels")
     num_classes = len(labels)
 
-    inputs_l = inputs
+    inputs_l = inputs  # 1 x 1 x H x W x S
+    # 1 x 11 x H x W x S
     pred_volume = torch.repeat_interleave(torch.zeros_like(inputs_l), num_classes + 1, dim=1).float()
 
-    inputs_l = inputs_l.squeeze()
+    inputs_l = inputs_l.squeeze()  # 1 x H x W x S
     n_z_before_pad = inputs_l.shape[-1]
     # pad the z direction, so we can easily extract 2.5D input and predict labels for the center slice
 
     pd = (n_z_slices // 2, n_z_slices // 2)
-    inputs_l = F.pad(inputs_l, pd, "constant", 0)
+    inputs_l = F.pad(inputs_l, pd, "constant", 0)  # 1 x H x W x (S + 2z)
 
     computeEmbedding = kwargs.pop("computeEmbedding")
 
@@ -120,7 +121,7 @@ def vista_slice_inference(
         class_prompts = [i for i in range(num_classes)]
         point_prompts = {"foreground": [], "background": []}
         pred_volume = iterate_all(
-            pred_volume,
+            pred_volume,  # 1 x 11 x H x W x S
             n_z_slices,
             n_z_before_pad,
             inputs_l,
@@ -275,10 +276,10 @@ def update_slice(
 
 
 def iterate_all(
-        pred_volume,
+        pred_volume,    # 1 x 11 x H x W x S
         n_z_slices,
         n_z_before_pad,
-        inputs_l,
+        inputs_l,       # 1 x H x W x (S + 2z)
         class_prompts,
         point_prompts,
         predictor,
@@ -307,12 +308,15 @@ def iterate_all(
             else:
                 outputs = predictor(data)
             logit = outputs[0]["high_res_logits"]
+            print(f'logit shape: {logit.shape}')
 
         out_list = torch.unbind(logit, dim=0)
         y_pred = torch.stack(post_pred(out_list)).float()
+        print(f'y_pred shape: {y_pred.shape}')
         pred_idx = start_idx - (n_z_slices // 2) if not cachedEmbedding else start_idx
+        # 1 x 11 x H x W x (S + 2z)
         pred_volume[0, unique_labels, ..., pred_idx] = y_pred
-
+    print('pred_volume.shape before argmax and unsqueeze: 'pred_volume.shape)
     pred_volume = pred_volume.argmax(1).unsqueeze(1).cpu()
     pred_volume = pred_volume.float()
 
