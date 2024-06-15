@@ -79,6 +79,7 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt_path')
     parser.add_argument('--file_path')
     parser.add_argument('--json_form')
+    parser.add_argument('--image_folder', default='/mnt/src/data')
     parser.add_argument('--output_folder', default='./out')
     parser.add_argument('--vit_type', default='vit_h')
     parser.add_argument('--image_size', default=512)
