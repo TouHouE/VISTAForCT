@@ -81,7 +81,7 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
         image, affine = processor(image_path, True)
         old_shape = image.shape
         image = image.cuda().unsqueeze(0)
-        print(f'Shape: {old_shape}, {image.shape}')
+        # print(f'Shape: {old_shape}, {image.shape}')
         mask3d: MetaTensor = other.vista_slice_inference(
             image, model, 'cuda', n_z_slices=27,
             labels=labels, computeEmbedding=False,
@@ -89,7 +89,7 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
             cached_data=False, cachedEmbedding=False,
             original_affine=affine
         )
-        print(f'final shape: {mask3d.shape}')
+        # print(f'final shape: {mask3d.shape}')
         saver(mask3d.squeeze(0), mask3d.meta)
         # torch.save(mask3d, )
         table[f'pred_{idx}'] = image_path

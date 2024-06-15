@@ -308,17 +308,17 @@ def iterate_all(
             else:
                 outputs = predictor(data)
             logit = outputs[0]["high_res_logits"]
-            print(f'logit shape: {logit.shape}')
+            # print(f'logit shape: {logit.shape}')
 
         out_list = torch.unbind(logit, dim=0)
         y_pred = torch.stack(post_pred(out_list)).float()
-        print(f'y_pred shape: {y_pred.shape}')
+        # print(f'y_pred shape: {y_pred.shape}')
         pred_idx = start_idx - (n_z_slices // 2) if not cachedEmbedding else start_idx
         # 1 x 11 x H x W x (S + 2z)
         pred_volume[0, unique_labels, ..., pred_idx] = y_pred
-    print('pred_volume.shape before argmax and unsqueeze: ', pred_volume.shape)
+    # print('pred_volume.shape before argmax and unsqueeze: ', pred_volume.shape)
     pred_volume = pred_volume.argmax(1).unsqueeze(1).cpu()
-    print(f'pred_volume.shape become: {pred_volume.shape}')
+    # print(f'pred_volume.shape become: {pred_volume.shape}')
     pred_volume = pred_volume.float()
 
     if cached_pred is not None:
