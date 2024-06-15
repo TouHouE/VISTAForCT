@@ -9,7 +9,8 @@ from torch.nn import functional as F
 import numpy as np
 
 
-def prepare_sam_val_input(inputs, class_prompts, point_prompts, start_idx, original_affine=None, device=None, sam_image_size=512):
+def prepare_sam_val_input(inputs, class_prompts, point_prompts, start_idx, original_affine=None, device=None,
+                          sam_image_size=512):
     # Don't exclude background in val but will ignore it in metric calculation
     H, W = inputs.shape[1:]
     foreground_all = point_prompts["foreground"]
@@ -70,13 +71,14 @@ def prepare_sam_val_input(inputs, class_prompts, point_prompts, start_idx, origi
 
     return prepared_input, unique_labels
 
+
 def vista_slice_inference(
-    inputs: torch.Tensor | MetaTensor,
-    predictor: Callable[..., torch.Tensor | Sequence[torch.Tensor] | dict[Any, torch.Tensor]],
-    device: torch.device | str | None = None,
-    n_z_slices: int = 9,
-    *args: Any,
-    **kwargs: Any,
+        inputs: torch.Tensor | MetaTensor,
+        predictor: Callable[..., torch.Tensor | Sequence[torch.Tensor] | dict[Any, torch.Tensor]],
+        device: torch.device | str | None = None,
+        n_z_slices: int = 9,
+        *args: Any,
+        **kwargs: Any,
 ) -> torch.Tensor | tuple[torch.Tensor, ...] | dict[Any, torch.Tensor]:
     temp_meta = None
     if isinstance(inputs, MetaTensor):
@@ -197,7 +199,7 @@ def compute_embedding(n_z_slices, n_z_before_pad, inputs_l, predictor):
     image_embedding_dict = {}
     # get image embedding from the predictor (network) forward function
     for start_idx in range((n_z_slices // 2), (n_z_slices // 2 + n_z_before_pad)):
-        inputs = inputs_l[..., start_idx - (n_z_slices // 2) : start_idx + (n_z_slices // 2) + 1].permute(2, 0, 1)
+        inputs = inputs_l[..., start_idx - (n_z_slices // 2): start_idx + (n_z_slices // 2) + 1].permute(2, 0, 1)
         # Here, the batch size is 1 (it is possible to increase batch size if the device has enough memory).
         data = [{"image": inputs}]
         with autocast():
@@ -209,18 +211,18 @@ def compute_embedding(n_z_slices, n_z_before_pad, inputs_l, predictor):
 
 
 def update_slice(
-    pred_volume,
-    n_z_slices,
-    n_z_before_pad,
-    inputs_l,
-    class_prompts,
-    point_prompts,
-    predictor,
-    post_pred_slice,
-    cached_pred,
-    num_classes,
-    original_affine,
-    device,
+        pred_volume,
+        n_z_slices,
+        n_z_before_pad,
+        inputs_l,
+        class_prompts,
+        point_prompts,
+        predictor,
+        post_pred_slice,
+        cached_pred,
+        num_classes,
+        original_affine,
+        device,
 ):
     z_indices = [p[2] + (9 // 2) for p in point_prompts["foreground"]]
     z_indices.extend([p[2] + (9 // 2) for p in point_prompts["background"]])
@@ -232,7 +234,7 @@ def update_slice(
         if start_idx < (n_z_slices // 2):
             continue
 
-        inputs = inputs_l[..., start_idx - (n_z_slices // 2) : start_idx + (n_z_slices // 2) + 1].permute(2, 0, 1)
+        inputs = inputs_l[..., start_idx - (n_z_slices // 2): start_idx + (n_z_slices // 2) + 1].permute(2, 0, 1)
         if device and (device == "cuda" or isinstance(device, torch.device) and device.type == "cuda"):
             inputs = inputs.cuda()
         data, unique_labels = prepare_sam_val_input(
@@ -273,17 +275,17 @@ def update_slice(
 
 
 def iterate_all(
-    pred_volume,
-    n_z_slices,
-    n_z_before_pad,
-    inputs_l,
-    class_prompts,
-    point_prompts,
-    predictor,
-    post_pred,
-    cachedEmbedding,
-    cached_pred,
-    device,
+        pred_volume,
+        n_z_slices,
+        n_z_before_pad,
+        inputs_l,
+        class_prompts,
+        point_prompts,
+        predictor,
+        post_pred,
+        cachedEmbedding,
+        cached_pred,
+        device,
 ):
     start_range = (
         range(n_z_slices // 2, min((n_z_slices // 2 + n_z_before_pad), len(cachedEmbedding)))
@@ -291,7 +293,7 @@ def iterate_all(
         else range(n_z_slices // 2, n_z_slices // 2 + n_z_before_pad)
     )
     for start_idx in start_range:
-        inputs = inputs_l[..., start_idx - n_z_slices // 2 : start_idx + n_z_slices // 2 + 1].permute(2, 0, 1)
+        inputs = inputs_l[..., start_idx - n_z_slices // 2: start_idx + n_z_slices // 2 + 1].permute(2, 0, 1)
         if device == "cuda" or (isinstance(device, torch.device) and device.type == "cuda"):
             inputs = inputs.cuda()
         data, unique_labels = prepare_sam_val_input(inputs, class_prompts, point_prompts, start_idx, device=device)
