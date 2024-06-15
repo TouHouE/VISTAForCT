@@ -38,14 +38,18 @@ def load_model(ckpt_path, model: nn.Module) -> nn.Module:
     return model.load_state_dict(weight_dict)
 
 
+@torch.no_grad()
 def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, args) -> list[torch.Tensor]:
     def _one_slice(_model: nn.Module, _slice_image) -> torch.Tensor:
         _slice_pred = _model(_slice_image)
         return _slice_pred[0]['high_res_logits']
+    model.eval()
+    model.cuda()
 
     for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list)):
         image_path = dpack['image']
         image = processor(image_path)
+        image = image.cuda()
         # C, H, W, S -> H, W, S -> H, W, Ns, S' -> Ns, S', H, W
         slice_group = image[0].unfold(-1, args.roi_z_iter, 1).permute(2, 3, 0, 1)
         pred_group = list()
