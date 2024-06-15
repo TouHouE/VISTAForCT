@@ -19,8 +19,8 @@ from typing import Any, Optional, Tuple, Type
 
 import numpy as np
 import torch
-from segment_anything.modeling.common import LayerNorm2d
-from segment_anything.modeling.prompt_encoder import PromptEncoder
+from training.segment_anything.modeling.common import LayerNorm2d
+from training.segment_anything.modeling.prompt_encoder import PromptEncoder
 from torch import nn
 
 

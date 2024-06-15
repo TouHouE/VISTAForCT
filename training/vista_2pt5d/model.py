@@ -20,12 +20,12 @@ from typing import Any, Dict, List, Tuple
 
 import monai
 import torch
-from segment_anything.modeling import TwoWayTransformer
-from segment_anything.modeling.mask_decoder import MaskDecoder
+from training.segment_anything.modeling import TwoWayTransformer
+from training.segment_anything.modeling.mask_decoder import MaskDecoder
 from torch import nn
 from torch.nn import functional as F
-from vista_2pt5d.vista_image_encoder import VistaImageEncoderViT
-from vista_2pt5d.vista_prompt_encoder import VistaPromptEncoder
+from training.vista_2pt5d.vista_image_encoder import VistaImageEncoderViT
+from training.vista_2pt5d.vista_prompt_encoder import VistaPromptEncoder
 
 
 class Vista2pt5D(nn.Module):

@@ -19,7 +19,7 @@ from typing import Tuple, Type
 
 import torch
 import torch.nn as nn
-from segment_anything.modeling.image_encoder import ImageEncoderViT, PatchEmbed
+from training.segment_anything.modeling.image_encoder import ImageEncoderViT, PatchEmbed
 
 
 # This class and its supporting functions below lightly adapted from the ViTDet backbone available at: https://github.com/facebookresearch/detectron2/blob/main/detectron2/modeling/backbone/vit.py # noqa
