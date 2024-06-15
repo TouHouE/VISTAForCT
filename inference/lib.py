@@ -19,17 +19,22 @@ class Processor:
             clip=args.clip
         )
         self.pad_size = (args.roi_z_iter // 2, args.roi_z_iter // 2)
-        self.output_method = MF.Compose([MF.Activations(sigmoid=True), MF.AsDiscrete(threshold=0.5)])
+        self.output_method = MF.Compose([MF.Activations(sigmoid=True)])
 
     def prepare_input(self, image):
         vista_input, uni_labels = IU.prepare_slice_data(image, self.args)
         return vista_input, uni_labels
 
-    def prepare_output(self, output_cand):
+    def prepare_output(self, output_cand: list[torch.Tensor]):
+        """
+
+        @param output_cand: a list of prediction mask with shape: S x (nc, 1, H, W), the nc is # of category
+        @return: A 3d mask with shape: (nc, S, H, W)
+        """
         # print(output_cand.shape)
-        output_cand = decollate_batch(output_cand)
+        # output_cand = decollate_batch(output_cand)
         output_cand = self.output_method(output_cand)
-        return torch.stack(output_cand, 0)
+        return torch.cat(output_cand, 1)
 
     def __call__(self, path, stage='prepare') -> torch.Tensor:
         if (img_folder := self.args.image_folder) is not None:
