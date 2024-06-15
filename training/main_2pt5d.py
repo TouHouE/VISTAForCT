@@ -165,7 +165,7 @@ def main_worker(gpu, args):
 
     dice_loss = DiceCELoss(sigmoid=True)
 
-    post_label = AsDiscrete(to_onehot=105)
+    post_label = AsDiscrete(to_onehot=args.nc)
     post_pred = Compose([Activations(sigmoid=True), AsDiscrete(threshold=0.5)])
     dice_acc = DiceMetric(include_background=False, reduction=MetricReduction.MEAN, get_not_nans=True)
 

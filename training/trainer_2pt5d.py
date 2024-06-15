@@ -408,10 +408,22 @@ def prepare_sam_test_input(inputs, labels, args, previous_pred=None):
 
 
 def prepare_sam_val_input_cp_only(inputs, labels, args):
+    """
+
+    @param inputs: A 3d tensor with shape roi_z_iter x H x W
+    @param labels: A 2d tensor with shape H x W
+    @param args:
+    @return:
+    """
     # Don't exclude background in val but will ignore it in metric calculation
     unique_labels = torch.tensor([i for i in range(1, args.nc)]).cuda(args.rank)
 
-    # preprocess make the size of lable same as high_res_logit
+    """
+        Some annotation for `batch_labels`
+        - preprocess make the size of label same as high_res_logit.
+        - As the result, just become the one-hot encoding.
+        - The shape is (nc - 1, H, W). nc - 1 is for skip background
+    """
     batch_labels = torch.stack([labels == unique_labels[i] for i in range(len(unique_labels))], dim=0).float()
 
     prepared_input = [{"image": inputs, "original_size": tuple(labels.shape)}]
@@ -432,14 +444,11 @@ def val_epoch(model, loader, epoch, acc_func, args, iterative=False, post_label=
             # only take 1 batch
             inputs_l = batch_data["image"]
             labels_l = batch_data["label"]
-            labels_l.shape[-1]
-            # assert n_z_before_pad >= args.num_patch_val + args.roi_z_iter
-
-
             n_slice = args.roi_z_iter
             # pad the z direction, so we can easily extract 2.5D input and predict labels for the center slice
             pd = (n_slice // 2, n_slice // 2)
 
+            # padding at last axis (z-axis), the goal in this step like convolution padding
             inputs_l = F.pad(inputs_l, pd, "constant", 0)
             labels_l = F.pad(labels_l, pd, "constant", 0)
             n_z_after_pad = labels_l.shape[-1]
@@ -456,7 +465,6 @@ def val_epoch(model, loader, epoch, acc_func, args, iterative=False, post_label=
 
                 # we only need the label for the center slice
                 labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
-
                 data, target, _ = prepare_sam_val_input_cp_only(inputs.cuda(args.rank), labels.cuda(args.rank), args)
 
                 with autocast(enabled=args.amp):
