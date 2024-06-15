@@ -30,7 +30,7 @@ def load_model(ckpt_path, model: nn.Module) -> nn.Module:
     old_state_dict = torch.load(ckpt_path, map_location='cpu')
     weight_dict = OrderedDict()
     print(old_state_dict.keys())
-    if (_mapper := old_state_dict.get('state_dict')) is None:
+    if (_mapper := old_state_dict.get('state_dict')) is not None:
         for k, v in _mapper.items():
             weight_dict[k] = v
     else:
