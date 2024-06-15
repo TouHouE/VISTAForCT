@@ -47,7 +47,7 @@ class Processor:
         # image = self.spacier(image)
         # image = self.resizer(image)
         image = self.scaler(image)
-        image = F.pad(image, self.pad_size, 'constant', 0)
+        # image = F.pad(image, self.pad_size, 'constant', 0)
         if need_affine:
             return image, am
         return image
