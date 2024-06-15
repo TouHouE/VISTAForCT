@@ -70,7 +70,7 @@ def main(args):
     model = load_model(args.ckpt_path, model)
     processor = Processor(args)
     data_pack_list = make_data_pack_list(args)
-    launch_eval(model, data_pack_list, processor)
+    launch_eval(model, data_pack_list, processor, args)
 
 
 
