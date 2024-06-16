@@ -74,7 +74,7 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
     model.eval()
     model.cuda()
     table = dict()
-    saver = MF.SaveImage(args.output_folder, output_postfix='pred', output_dtype=torch.uint8)
+    saver = MF.SaveImage(args.output_folder, output_postfix='pred', output_dtype=torch.int16)
     print(f'{args}')
     for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list)):
         image_path = dpack['image']
