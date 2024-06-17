@@ -58,6 +58,7 @@ parser.add_argument("--dist-url", default="tcp://127.0.0.1:23456", type=str, hel
 parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
 parser.add_argument("--workers", default=8, type=int, help="number of workers")
 parser.add_argument("--use_normal_dataset", action="store_true", help="use monai Dataset class")
+parser.add_argument('--dataset_type', default='cache', type=str, help='belong to [cache, persis] exclusive to --use_normal_dataset')
 parser.add_argument("--a_min", default=-1024, type=float, help="a_min in ScaleIntensityRanged")
 parser.add_argument("--a_max", default=1024, type=float, help="a_max in ScaleIntensityRanged")
 parser.add_argument("--b_min", default=0.0, type=float, help="b_min in ScaleIntensityRanged")

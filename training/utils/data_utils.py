@@ -140,13 +140,19 @@ def get_loader(args):
                     num_partitions=args.world_size,
                     even_divisible=True,
                 )[args.rank]
-
-            train_ds = data.CacheDataset(
-                data=datalist,
-                transform=train_transform,
-                cache_rate=1.0,
-                num_workers=args.workers,
-            )
+            if args.dataset_type == 'cache':
+                train_ds = data.CacheDataset(
+                    data=datalist,
+                    transform=train_transform,
+                    cache_rate=1.0,
+                    num_workers=args.workers,
+                )
+            elif args.dataset_type == 'persis':
+                train_ds = data.PersistentDataset(
+                    data=datalist,
+                    transform=train_transform,
+                    cache_dir='./cache_train'
+                )
         train_sampler = None
 
         train_loader = data.DataLoader(
@@ -212,9 +218,12 @@ def split_data(args):
             list_train = list_train[:-l]
 
     if hasattr(args, "rank") and args.rank == 0:
-        print("train files", len(list_train), [os.path.basename(_["image"]).split(".")[0] for _ in list_train])
-        print("val files", len(list_valid), [os.path.basename(_["image"]).split(".")[0] for _ in list_valid])
-        print("test files", len(list_test), [os.path.basename(_["image"]).split(".")[0] for _ in list_test])
+        # print("train files", len(list_train), [os.path.basename(_["image"]).split(".")[0] for _ in list_train])
+        # print("val files", len(list_valid), [os.path.basename(_["image"]).split(".")[0] for _ in list_valid])
+        # print("test files", len(list_test), [os.path.basename(_["image"]).split(".")[0] for _ in list_test])
+        print(f'# of train: {len(list_train)}')
+        print(f'# of val  : {len(list_valid)}')
+        print(f'# of test : {len(list_test)}')
 
     # training data
     files = []
