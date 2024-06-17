@@ -541,7 +541,8 @@ def run_training(
         writer = SummaryWriter(log_dir=args.logdir)
         if args.rank == 0:
             print("Writing Tensorboard logs to ", args.logdir)
-        run = wandb.init(project=args.project, name=args.name, config=args)
+        if args.wandb:
+            run = wandb.init(project=args.project, name=args.name, config=args)
     scaler = None
     if args.amp:
         scaler = GradScaler()
