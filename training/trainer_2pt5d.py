@@ -190,7 +190,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
 
             left_ptr = start_idx - n_slice // 2
             right_ptr = start_idx + n_slice // 2 + 1
-            inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
+            inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3).squeeze(1)
 
             # we only need the label for the center slice
             labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
@@ -273,7 +273,8 @@ def train_epoch_iterative(model, loader, optimizer, scaler, epoch, loss_func, ru
             start_idx = int(np.random.randint(low=n_slice // 2, high=(n_slice // 2 + n_z_before_pad)))
             left_ptr = start_idx - n_slice // 2
             right_ptr = start_idx + n_slice // 2 + 1
-            inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
+            # B C H W S -> B C S H W -> B S H W
+            inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3).squeeze(1)
 
             # we only need the label for the center slice
             labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
@@ -461,7 +462,7 @@ def val_epoch(model, loader, epoch, acc_func, args, iterative=False, post_label=
             for start_idx in range(start, end):
                 left_ptr = start_idx - n_slice // 2
                 right_ptr = start_idx + n_slice // 2 + 1
-                inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
+                inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3).squeeze(1)
 
                 # we only need the label for the center slice
                 labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
