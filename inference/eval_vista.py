@@ -1,18 +1,25 @@
 import os
-from argparse import ArgumentParser
-from typing import Optional
+import json
 from collections import OrderedDict
+from argparse import ArgumentParser
+from typing import Optional, Callable
+
+import wandb
+
 import torch
 from torch import nn
-from training.vista_2pt5d.model import sam_model_registry
-from monai import transforms as MF
-from inference.lib import Processor
-from inference import other
-import json
 from tqdm.auto import tqdm
+
+from monai import transforms as MF
 from monai.data import MetaTensor
-import wandb
+from monai.metrics import compute_dice
+
+from training.vista_2pt5d.model import sam_model_registry
+
+from inference import other
+from inference.lib import Processor
 labels = [
+        "Background",
         'RightAtrium',
         'RightVentricle',
         'LeftAtrium',
@@ -71,15 +78,19 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
             slice_mask_pred = _one_slice(model, vista_input)
             pred_group.append(slice_mask_pred)
         return processor.prepare_output(pred_group)
-    model_date = args.ckpt_path.split('/')[-2]
-    model_type = args.ckpt_path.split('/')[-3]
+
+    model_date: str = args.ckpt_path.split('/')[-2]
+    model_type: str = args.ckpt_path.split('/')[-3]
     model.eval()
     model.cuda()
-    table = dict()
-    saver = MF.SaveImage(args.output_folder, output_postfix='pred', output_dtype=torch.int16)
-    print(f'{args}')
+    table: dict = dict()
+    saver: Callable = MF.SaveImage(args.output_folder, output_postfix='pred', output_dtype=torch.int16)
+    print(f'Config: {args}')
     wandb.init(project='show_seg', name=f'{model_type}_{model_date}')
-    label_map = {idx + 1: key for idx, key in enumerate(labels)}
+    label_map: dict[int, str] = {idx: key for idx, key in enumerate(labels)}
+    best_dice = -1
+    best_image_obj = None
+
     for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list)):
         image_path = dpack['image']
         image_name = image_path.split('/')[-1]
@@ -88,7 +99,7 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
         label = processor(label_path, is_label=True)
         old_shape = image.shape
         image = image.cuda().unsqueeze(0)
-        print(f'Shape: {old_shape}, {image.shape}')
+        # print(f'Shape: {old_shape}, {image.shape}')
         mask3d: MetaTensor = other.vista_slice_inference(
             image, model, 'cuda', n_z_slices=27,
             labels=labels, computeEmbedding=False,
@@ -96,30 +107,41 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
             cached_data=False, cachedEmbedding=False,
             original_affine=affine
         )
-        """
-        print(image.shape)
-        print(mask3d.shape)
-        print(label.shape)
-        exit()
-        """
-        for i in range(image.shape[-1]):
+        fully_dice = .0
+
+        for s in range(image.shape[-1]):
+            slice_mask = mask3d[0, 0, ..., s].detach().cpu().numpy()
+            slice_label = label[0, ..., s].detach().cpu().numpy()
+            dice_group = compute_dice(y_pred=slice_mask, y=slice_label)
+            total_dice = torch.nansum(dice_group).item()
+            num_of_not_nan = args.nc - 1 - torch.sum(torch.isnan(dice_group).float()).item()
+            current_dice = total_dice / num_of_not_nan
+            fully_dice += current_dice
+
+
+
             mask_pack = {
                     'predictions': {
-                        'mask_data': mask3d[0, 0, ..., i].detach().cpu().numpy(),
+                        'mask_data': slice_mask,
                         'class_labels': label_map,
                     }, 
                     'ground_truth': {
-                        'mask_data': label[0, ..., i].detach().cpu().numpy(),
+                        'mask_data': slice_label,
                         'class_labels': label_map
                     }
                 }
             image_obj = wandb.Image(
-                    image[0, 0, ..., i].detach().cpu().numpy(),
+                    image[0, 0, ..., s].detach().cpu().numpy(),
                     masks=mask_pack,
-                    caption=f'slice:{i}'
+                    caption=f'slice:{s}-Dice: {current_dice:.5f}'
                     )
             
-            wandb.log({image_name: image_obj, 'slice': i, 'path': image_path})
+            wandb.log({image_name: image_obj, 'slice': s, 'path': image_path, 'dice score': current_dice})
+            if current_dice > best_dice:
+                best_dice = current_dice
+                best_image_obj = image_obj
+
+        wandb.log({'best for each image': best_image_obj})
 
 
         # print(f'final shape: {mask3d.shape}')
@@ -157,6 +179,7 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt_path')
     parser.add_argument('--file_path')
     parser.add_argument('--json_form')
+    parser.add_argument('--num_prompt', default=0, type=int, required=False)
     parser.add_argument('--image_folder', default='/mnt/src/data')
     parser.add_argument('--output_folder', default='./out')
     parser.add_argument('--nc', default=11, type=int, help='including background(0).')
@@ -169,7 +192,7 @@ if __name__ == '__main__':
     parser.add_argument('--b_min', default=-1, type=int)
     parser.add_argument('--b_max', default=1, type=int)
     parser.add_argument('--clip', action='store_true', default=True)
-    parser.add_argument('--debug', default=-1, type=int)
+    parser.add_argument('--debug', default=-1, type=int, required=False)
     args = parser.parse_args()
     make_sure_folder_exist(args)
     main(args)
