@@ -35,6 +35,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 warnings.filterwarnings("ignore", category=UserWarning, module="nibabel")
 parser = argparse.ArgumentParser(description="Swin UNETR segmentation pipeline")
 parser.add_argument('--wandb', action="store_true")
+parser.add_argument('--project', type=str)
 parser.add_argument('--nc', default=11)
 parser.add_argument('--name')
 parser.add_argument("--checkpoint", default=None, help="start training from saved checkpoint")
@@ -131,8 +132,18 @@ def main():
         set_determinism(seed=args.seed)
     if args.distributed:
         args.ngpus_per_node = torch.cuda.device_count()
-        print("Found total gpus", args.ngpus_per_node)
+        print("Found total gpus", args.ngpus_per_node)        
         args.world_size = args.ngpus_per_node * args.world_size
+        children = list()
+        """
+        for i in range(args.world_size):
+            subproc = mp.Process(target=main_worker, args=(i, args))
+            children.append(subproc)
+            subproc.start()
+        for i in range(args.world_size):
+            children[i].join()
+        """
+        # mp.set_start_method('spawn')        
         mp.spawn(main_worker, nprocs=args.ngpus_per_node, args=(args,))
     else:
         main_worker(gpu=0, args=args)

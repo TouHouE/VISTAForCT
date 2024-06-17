@@ -19,7 +19,7 @@ class Processor:
             clip=args.clip
         )
         self.pad_size = (args.roi_z_iter // 2, args.roi_z_iter // 2)
-        self.output_method = MF.Compose([MF.Activations(sigmoid=True)])
+        self.output_method = MF.Compose([MF.Activations(sigmoid=True), MF.AsDiscrete(threshold=.5)])
 
     def prepare_input(self, image):
         vista_input, uni_labels = IU.prepare_slice_data(image, self.args)
@@ -36,7 +36,7 @@ class Processor:
         output_cand = self.output_method(output_cand)
         return torch.cat(output_cand, 1)
 
-    def __call__(self, path, need_affine=False) -> torch.Tensor:
+    def __call__(self, path, need_affine=False, is_label=False) -> torch.Tensor:
         if (img_folder := self.args.image_folder) is not None:
             path = os.path.join(img_folder, path)
         image = self.loader(path)
@@ -46,7 +46,8 @@ class Processor:
         image = self.axior(image)
         # image = self.spacier(image)
         # image = self.resizer(image)
-        image = self.scaler(image)
+        if not is_label:
+            image = self.scaler(image)
         # image = F.pad(image, self.pad_size, 'constant', 0)
         if need_affine:
             return image, am

@@ -11,6 +11,7 @@ from inference import other
 import json
 from tqdm.auto import tqdm
 from monai.data import MetaTensor
+import wandb
 labels = [
         'RightAtrium',
         'RightVentricle',
@@ -31,7 +32,7 @@ def make_data_pack_list(args):
     if json_file is not None:
         with open(json_file, 'r') as jin:
             _pack_list = json.load(jin)
-        pack_list.extend(_pack_list['testing'])
+        pack_list.extend(_pack_list['training'])
     elif json_file is None and file_path is not None:
         pack_list.append({
             'image': file_path
@@ -70,18 +71,24 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
             slice_mask_pred = _one_slice(model, vista_input)
             pred_group.append(slice_mask_pred)
         return processor.prepare_output(pred_group)
-
+    model_date = args.ckpt_path.split('/')[-2]
+    model_type = args.ckpt_path.split('/')[-3]
     model.eval()
     model.cuda()
     table = dict()
     saver = MF.SaveImage(args.output_folder, output_postfix='pred', output_dtype=torch.int16)
     print(f'{args}')
+    wandb.init(project='show_seg', name=f'{model_type}_{model_date}')
+    label_map = {idx + 1: key for idx, key in enumerate(labels)}
     for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list)):
         image_path = dpack['image']
+        image_name = image_path.split('/')[-1]
+        label_path = dpack['label']        
         image, affine = processor(image_path, True)
+        label = processor(label_path, is_label=True)
         old_shape = image.shape
         image = image.cuda().unsqueeze(0)
-        # print(f'Shape: {old_shape}, {image.shape}')
+        print(f'Shape: {old_shape}, {image.shape}')
         mask3d: MetaTensor = other.vista_slice_inference(
             image, model, 'cuda', n_z_slices=27,
             labels=labels, computeEmbedding=False,
@@ -89,6 +96,32 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
             cached_data=False, cachedEmbedding=False,
             original_affine=affine
         )
+        """
+        print(image.shape)
+        print(mask3d.shape)
+        print(label.shape)
+        exit()
+        """
+        for i in range(image.shape[-1]):
+            mask_pack = {
+                    'predictions': {
+                        'mask_data': mask3d[0, 0, ..., i].detach().cpu().numpy(),
+                        'class_labels': label_map,
+                    }, 
+                    'ground_truth': {
+                        'mask_data': label[0, ..., i].detach().cpu().numpy(),
+                        'class_labels': label_map
+                    }
+                }
+            image_obj = wandb.Image(
+                    image[0, 0, ..., i].detach().cpu().numpy(),
+                    masks=mask_pack,
+                    caption=f'slice:{i}'
+                    )
+            
+            wandb.log({image_name: image_obj, 'slice': i, 'path': image_path})
+
+
         # print(f'final shape: {mask3d.shape}')
         saver(mask3d.squeeze(0), mask3d.meta)
         # torch.save(mask3d, )
