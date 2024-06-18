@@ -131,7 +131,7 @@ def get_loader(args):
     else:
         datalist = train_files
         if args.use_normal_dataset:
-            train_ds = data.Dataset(data=datalist[:1], transform=train_transform)
+            train_ds = data.Dataset(data=datalist, transform=train_transform, )
         else:
             if args.distributed:
                 datalist = data.partition_dataset(
@@ -171,12 +171,24 @@ def get_loader(args):
                 num_partitions=args.world_size,
                 even_divisible=False,
             )[args.rank]
-        val_ds = data.CacheDataset(
-            data=val_files,
-            transform=val_transform,
-            cache_rate=1.0,
-            num_workers=args.workers,
-        )
+        if (ignore_ds_type := args.use_normal_dataset):
+            val_ds = data.Dataset(
+                data=val_files,
+                transform=val_transform
+            )
+        elif not ignore_ds_type and args.dataset_type == 'cache':
+            val_ds = data.CacheDataset(
+                data=val_files,
+                transform=val_transform,
+                cache_rate=1.0,
+                num_workers=args.workers,
+            )
+        elif not ignore_ds_type and args.dataset_type == 'persis':
+            val_ds = data.PersistentDataset(
+                data=val_files,
+                transform=val_transform,
+                cache_dir='./val_cache'
+            )
         val_sampler = None
         val_loader = data.DataLoader(
             val_ds, batch_size=1, shuffle=False, num_workers=args.workers, sampler=val_sampler, pin_memory=True

@@ -600,6 +600,7 @@ def run_training(
         if args.rank == 0:
             print("Writing Tensorboard logs to ", args.logdir)
         if args.wandb:
+            print(f'Initializing wandb')
             run = wandb.init(project=args.project, name=args.name, config=args)
     scaler = None
     if args.amp:
