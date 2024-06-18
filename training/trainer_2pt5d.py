@@ -175,6 +175,11 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
         inputs_l = batch_data["image"]
         labels_l = batch_data["label"]
         # TODO: we only support batch_size = 1 for data loader.
+        B = inputs_l.shape[0]
+        if B == 1:
+            inputs_l = inputs_l.squeeze()
+            labels_l = inputs_l.squeeze()
+
         n_z_before_pad = labels_l.shape[-1]
 
         n_slice = args.roi_z_iter
@@ -190,21 +195,48 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
 
             left_ptr = start_idx - n_slice // 2
             right_ptr = start_idx + n_slice // 2 + 1
-            inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3)
+            if B == 1:
+                inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
+            else:
+                inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3).squeeze(1)
 
             # we only need the label for the center slice
             labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
 
-            data, target, target_original, skip = prepare_sam_training_input(
-                inputs.cuda(args.rank), labels.cuda(args.rank), args, model
-            )
+            data: torch.Tensor | list[torch.Tensor] = []
+            target: torch.Tensor | list[torch.Tensor] = []
+            target_original: torch.Size | list[torch.Size] = []
+            skip: bool = None
+
+            if B == 1:
+                data, target, target_original, skip = prepare_sam_training_input(
+                    inputs.cuda(args.rank), labels.cuda(args.rank), args, model
+                )
+            else:
+                for b in range(B):
+                    train_pack = prepare_sam_training_input(
+                        inputs[b].cuda(args.rank), labels[b].cuda(args.rank), args, model
+                    )
+                    data.append(train_pack[0])
+                    target.append(train_pack[1])
+                    target_original.append(train_pack[2])
+                    skip = skip
 
             for param in model.parameters():
                 param.grad = None
 
             with autocast(enabled=args.amp):
-                outputs = model(data, is_train=True)
-            loss = loss_func(outputs[0]["low_res_logits"], target)
+                if B == 1:
+                    outputs = model(data, is_train=True)
+                else:
+                    outputs = model(torch.stack(data, dim=0), is_train=True)
+
+            if B == 1:
+                loss = loss_func(outputs[0]["low_res_logits"], target)
+            else:
+                outputs = [_['low_res_logits'] for _ in outputs]
+                loss = loss_func(torch.stack(outputs, dim=0), torch.stack(target, dim=0))
+
 
             if skip:
                 loss = loss * 0.0
