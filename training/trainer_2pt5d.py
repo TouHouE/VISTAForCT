@@ -198,7 +198,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
             if B == 1:
                 inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
             else:
-                inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3).squeeze(1)            
+                inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3).squeeze(1)
             # we only need the label for the center slice
             labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
             
@@ -214,8 +214,9 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
                 )
             else:
                 for b in range(B):
+                    # print(f'inputs[{b}].shape: {inputs[b].shape}')
                     train_pack = prepare_sam_training_input(
-                        inputs[b].cuda(args.rank), labels[b].cuda(args.rank), args, model
+                        inputs[b].cuda(args.rank), labels[b].squeeze(0).cuda(args.rank), args, model
                     )
                     data.append(train_pack[0])
                     target.append(train_pack[1])
@@ -225,20 +226,24 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
             for param in model.parameters():
                 param.grad = None
 
+            outputs = list()
+
             with autocast(enabled=args.amp):
                 if B == 1:
                     outputs = model(data, is_train=True)
                 else:
-
-                    outputs = [model(_data, is_train=True) for _data in data]
-
+                    #outputs = model(data, is_train=True)
+                    #print(outputs)
+                    for _data in data:
+                        # outputs = [model(_data, is_train=True) for _data in data]
+                        # print(f'{_data[0]["image"].shape}')
+                        outputs.append(model(_data, is_train=True))
+                        # outputs.append(out)
             if B == 1:
                 loss = loss_func(outputs[0]["low_res_logits"], target)
             else:
-                outputs = [_[0]['low_res_logits'] for _ in outputs]
-                loss = loss_func(torch.stack(outputs, dim=0), torch.stack(target, dim=0))
-
-
+                outputs = [_[0]['low_res_logits'] for _ in outputs]                
+                loss = loss_func(torch.cat(outputs, dim=0), torch.cat(target, dim=0))
             if skip:
                 loss = loss * 0.0
 
