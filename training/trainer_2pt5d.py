@@ -229,12 +229,13 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
                 if B == 1:
                     outputs = model(data, is_train=True)
                 else:
-                    outputs = model(torch.stack(data, dim=0), is_train=True)
+
+                    outputs = [model(_data, is_train=True) for _data in data]
 
             if B == 1:
                 loss = loss_func(outputs[0]["low_res_logits"], target)
             else:
-                outputs = [_['low_res_logits'] for _ in outputs]
+                outputs = [_[0]['low_res_logits'] for _ in outputs]
                 loss = loss_func(torch.stack(outputs, dim=0), torch.stack(target, dim=0))
 
 
