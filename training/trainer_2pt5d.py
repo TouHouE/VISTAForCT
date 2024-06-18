@@ -174,7 +174,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
         # only take 1 batch
         inputs_l = batch_data["image"]
         labels_l = batch_data["label"]
-        # TODO: we only support batch_size = 1 for data loader.
+        # TODO: we only support batch_size = 1 for data loader.        
         B = inputs_l.shape[0]
         if B == 1:
             inputs_l = inputs_l.squeeze()
@@ -198,10 +198,10 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
             if B == 1:
                 inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
             else:
-                inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3).squeeze(1)
-
+                inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3).squeeze(1)            
             # we only need the label for the center slice
             labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
+            
 
             data: torch.Tensor | list[torch.Tensor] = []
             target: torch.Tensor | list[torch.Tensor] = []
