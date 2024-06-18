@@ -478,9 +478,14 @@ def val_epoch(model, loader, epoch, acc_func, args, iterative=False, post_label=
             # only take 1 batch
             inputs_l = batch_data["image"]
             labels_l = batch_data["label"]
+            B = inputs_l.shape[0]
             n_slice = args.roi_z_iter
             # pad the z direction, so we can easily extract 2.5D input and predict labels for the center slice
             pd = (n_slice // 2, n_slice // 2)
+
+            if B == 1:
+                inputs_l = inputs_l.squeeze()
+                labels_l = labels_l.squeeze()
 
             # padding at last axis (z-axis), the goal in this step like convolution padding
             inputs_l = F.pad(inputs_l, pd, "constant", 0)
@@ -495,15 +500,35 @@ def val_epoch(model, loader, epoch, acc_func, args, iterative=False, post_label=
             for start_idx in range(start, end):
                 left_ptr = start_idx - n_slice // 2
                 right_ptr = start_idx + n_slice // 2 + 1
-                inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3)
+                if B == 1:
+                    inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
+                else:
+                    inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3)
 
                 # we only need the label for the center slice
                 labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
-                data, target, _ = prepare_sam_val_input_cp_only(inputs.cuda(args.rank), labels.cuda(args.rank), args)
+
+                data: torch.Tensor | list[torch.Tensor] = []
+                target: torch.Tensor | list[torch.Tensor] = []
+
+                if B == 1:
+                    data, target, _ = prepare_sam_val_input_cp_only(inputs.cuda(args.rank), labels.cuda(args.rank), args)
+                else:
+                    inputs = inputs.cuda(args.rank)
+                    labels = labels.cuda(args.rank)
+
+                    for b in range(B):
+                        pack = prepare_sam_val_input_cp_only(inputs[b], labels[0], args)
+                        data.append(pack[0])
+                        target.append(pack[1])
 
                 with autocast(enabled=args.amp):
-                    outputs = model(data)
-                    logit = outputs[0]["high_res_logits"]
+                    if B == 1:
+                        outputs = model(data)
+                        logit = outputs[0]["high_res_logits"]
+                    else:
+                        outputs = [model(_data) for _data in data]
+                        logit = torch.stack([b_out[0]['high_res_logits'] for b_out in outputs], 0)
 
                 y_pred = torch.stack(post_pred(decollate_batch(logit)), 0)
 
