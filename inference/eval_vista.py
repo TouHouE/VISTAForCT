@@ -86,7 +86,9 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
     table: dict = dict()
     saver: Callable = MF.SaveImage(args.output_folder, output_postfix='pred', output_dtype=torch.int16)
     print(f'Config: {args}')
-    wandb.init(project='show_seg', name=f'{model_type}_{model_date}')
+    
+    if args.wandb:
+        wandb.init(project='show_seg', name=f'{model_type}_{model_date}')
     label_map: dict[int, str] = {idx: key for idx, key in enumerate(labels)}
     best_dice = -1
     best_image_obj = None
@@ -110,9 +112,10 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
         fully_dice = .0
 
         for s in range(image.shape[-1]):
+            # print(mask3d.shape)
             slice_mask = mask3d[0, 0, ..., s].detach().cpu().numpy()
             slice_label = label[0, ..., s].detach().cpu().numpy()
-            dice_group = compute_dice(y_pred=slice_mask, y=slice_label)
+            dice_group = compute_dice(y_pred=mask3d[0, ..., s].cpu(), y=label[..., s].cpu())
             total_dice = torch.nansum(dice_group).item()
             num_of_not_nan = args.nc - 1 - torch.sum(torch.isnan(dice_group).float()).item()
             current_dice = total_dice / num_of_not_nan
@@ -135,13 +138,13 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
                     masks=mask_pack,
                     caption=f'slice:{s}-Dice: {current_dice:.5f}'
                     )
-            
-            wandb.log({image_name: image_obj, 'slice': s, 'path': image_path, 'dice score': current_dice})
+            if args.wandb:    
+                wandb.log({image_name: image_obj, 'slice': s, 'path': image_path, 'dice score': current_dice})
             if current_dice > best_dice:
                 best_dice = current_dice
                 best_image_obj = image_obj
-
-        wandb.log({'best for each image': best_image_obj})
+        if args.wandb:
+            wandb.log({'best for each image': best_image_obj})
 
 
         # print(f'final shape: {mask3d.shape}')
@@ -193,6 +196,7 @@ if __name__ == '__main__':
     parser.add_argument('--b_max', default=1, type=int)
     parser.add_argument('--clip', action='store_true', default=True)
     parser.add_argument('--debug', default=-1, type=int, required=False)
+    parser.add_argument('--wandb', default=False, action='store_true')
     args = parser.parse_args()
     make_sure_folder_exist(args)
     main(args)
