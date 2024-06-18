@@ -22,7 +22,7 @@ export MAIN1="main_2pt5d.py"
 export MAIN2="second_main.py"
 export DIST="--distributed"
 export vit_size='h'
-export batch_size=16
+export batch_size=4
 export time=$(date +%m-%d_%H-%M-%S)
 export reuse_ckpt="/mnt/VISTA_workspace/runs/vista-h-b1/05-30_03-47-23"
 export torchrun="torchrun --nproc-per-node=1 --nnodes=1 --master-port=11234"
@@ -31,14 +31,14 @@ export PYTHON_CMD="
 	python ./training/main_2pt5d.py --nc=11 --project=Vista \
 --max_epochs 5000 --val_every 1 --optim_lr 0.00005 \
 --num_patch 160 --num_prompt 32 \
---json_list /mnt/src/data/vista_table.json \
+--json_list /mnt/src/data/vista_table_small.json \
 --data_dir /mnt/src/data --use_normal_dataset \
 --roi_z_iter 27 --save_checkpoint \
 --sam_base_model vit_${vit_size} \
 --logdir /mnt/src/VISTA_workspace/ckpt/vista-${vit_size}-b$batch_size/$time --point_prompt --label_prompt --seed 114514 \
 --iterative_training_warm_up_epoch 50 --batch_size=$batch_size \
 --label_prompt_warm_up_epoch 25 --patch_embed_3d --fold=0 --name=vista-${vit_size}-b$batch_size-${time}_no_cache_full --sam_image_size=512 \
---wandb --workers=16 
+--workers=16 
 "
 
 #echo "MASTER_ADDR: $MASTER_ADDR"
