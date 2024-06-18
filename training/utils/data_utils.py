@@ -133,6 +133,7 @@ def get_loader(args):
         if args.use_normal_dataset:
             train_ds = data.Dataset(data=datalist, transform=train_transform, )
         else:
+            print(f'Not normal dataset: {args.dataset_type}')
             if args.distributed:
                 datalist = data.partition_dataset(
                     data=datalist,
@@ -141,6 +142,7 @@ def get_loader(args):
                     even_divisible=True,
                 )[args.rank]
             if args.dataset_type == 'cache':
+                print('Using Cache datset')
                 train_ds = data.CacheDataset(
                     data=datalist,
                     transform=train_transform,
@@ -148,6 +150,7 @@ def get_loader(args):
                     num_workers=args.workers,
                 )
             elif args.dataset_type == 'persis':
+                print('Using Persis dataset')
                 train_ds = data.PersistentDataset(
                     data=datalist,
                     transform=train_transform,
