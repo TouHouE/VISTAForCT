@@ -14,6 +14,8 @@ from monai import transforms as MF
 from monai.data import MetaTensor
 from monai.metrics import compute_dice
 
+import numpy as np
+
 from training.vista_2pt5d.model import sam_model_registry
 
 from inference import other
@@ -94,18 +96,17 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
     best_image_obj = None
 
     for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list)):
-        image_path = dpack['image']
-        image_name = image_path.split('/')[-1]
-        label_path = dpack['label']        
+        image_path: str = dpack['image']
+        image_name: str = image_path.split('/')[-1]
+        label_path: str = dpack['label']
         image, affine = processor(image_path, True)
-        label = processor(label_path, is_label=True)
-        old_shape = image.shape
-        image = image.cuda().unsqueeze(0)
-        # print(f'Shape: {old_shape}, {image.shape}')
+        label: MetaTensor = processor(label_path, is_label=True)
+        image: MetaTensor = image.cuda().unsqueeze(0)
+
         mask3d: MetaTensor = other.vista_slice_inference(
-            image, model, 'cuda', n_z_slices=27,
+            image, model, 'cuda', n_z_slices=args.roi_z_iter,
             labels=labels, computeEmbedding=False,
-            class_prompts=None, point_prompts=None,
+            class_prompts=args.class_prompts, point_prompts=args.point_prompts,
             cached_data=False, cachedEmbedding=False,
             original_affine=affine
         )
@@ -113,15 +114,13 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
 
         for s in range(image.shape[-1]):
             # print(mask3d.shape)
-            slice_mask = mask3d[0, 0, ..., s].detach().cpu().numpy()
-            slice_label = label[0, ..., s].detach().cpu().numpy()
+            slice_mask: np.ndarray = mask3d[0, 0, ..., s].detach().cpu().numpy()
+            slice_label: np.ndarray = label[0, ..., s].detach().cpu().numpy()
             dice_group = compute_dice(y_pred=mask3d[0, ..., s].cpu(), y=label[..., s].cpu())
             total_dice = torch.nansum(dice_group).item()
             num_of_not_nan = args.nc - 1 - torch.sum(torch.isnan(dice_group).float()).item()
             current_dice = total_dice / num_of_not_nan
             fully_dice += current_dice
-
-
 
             mask_pack = {
                     'predictions': {
@@ -182,6 +181,8 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt_path')
     parser.add_argument('--file_path')
     parser.add_argument('--json_form')
+    parser.add_argument('--class_prompts', action='store_true', default=False)
+    parser.add_argument('--point_prompts', action='store_true', default=False)
     parser.add_argument('--num_prompt', default=0, type=int, required=False)
     parser.add_argument('--image_folder', default='/mnt/src/data')
     parser.add_argument('--output_folder', default='./out')
@@ -195,8 +196,9 @@ if __name__ == '__main__':
     parser.add_argument('--b_min', default=-1, type=int)
     parser.add_argument('--b_max', default=1, type=int)
     parser.add_argument('--clip', action='store_true', default=True)
-    parser.add_argument('--debug', default=-1, type=int, required=False)
+    parser.add_argument('--debug', default=-1, type=int, required=False, help='greater than 0 into debug mode')
     parser.add_argument('--wandb', default=False, action='store_true')
+    parser.add_argument('--project_name', default='show_seg', required=False, help='using to wandb project')
     args = parser.parse_args()
     make_sure_folder_exist(args)
     main(args)
