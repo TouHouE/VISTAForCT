@@ -330,7 +330,8 @@ def iterate_all(
             inputs = inputs.cuda()
 
         if ground_truth is not None:
-            point_prompts = IUtils.get_point_prompt_for_eval(ground_truth, args)
+            gt = ground_truth[..., left_ptr: right_ptr][..., n_z_slices // 2]
+            point_prompts = IUtils.get_point_prompt_for_eval(gt, args)
         data, unique_labels = prepare_sam_val_input(inputs, class_prompts, point_prompts, start_idx, device=device)
         predictor = predictor.eval()
         with autocast():
