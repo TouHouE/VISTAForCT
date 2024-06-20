@@ -7,7 +7,8 @@ from monai.utils import convert_to_dst_type
 from torch.cuda.amp import autocast
 from torch.nn import functional as F
 import numpy as np
-from inference.utils import generate_point_prompt
+from inference import utils as IUtils
+from argparse import Namespace
 
 def prepare_sam_val_input(
         inputs: MetaTensor,
@@ -78,8 +79,9 @@ def prepare_sam_val_input(
 def vista_slice_inference(
         inputs: torch.Tensor | MetaTensor,
         predictor: Callable[..., torch.Tensor | Sequence[torch.Tensor] | dict[Any, torch.Tensor]],
-        device: torch.device | str | None = None,
-        n_z_slices: int = 9,
+        cmd_args: Namespace,
+        device: Optional[torch.device | str | None] = None,
+        n_z_slices: int = 27,
         labels: torch.Tensor | MetaTensor = None,
         *args: Any,
         **kwargs: Any,
@@ -101,7 +103,8 @@ def vista_slice_inference(
 
     pd = (n_z_slices // 2, n_z_slices // 2)
     inputs_l = F.pad(inputs_l, pd, "constant", 0)  # 1 x H x W x (S + 2z)
-
+    if (gt := kwargs.pop('ground_truth')) is not None:
+        kwargs['ground_truth'] = F.pad(gt, pd, 'constant', 0)
     computeEmbedding = kwargs.pop("computeEmbedding")
 
     if computeEmbedding:
@@ -120,19 +123,10 @@ def vista_slice_inference(
     cachedEmbedding = cachedEmbedding if cachedEmbedding else None
     original_affine = kwargs.pop("original_affine")
 
-    if (class_prompts is None) and (point_prompts is None):
+    if (class_prompts is None) and (point_prompts is None) or True:
         # Everything button: no class, no point prompts: iterate all slices
-        unique_labels = torch.unique(labels)
-        batch_labels_ = torch.stack([labels == unique_labels[i] for i in range(len(unique_labels))], dim=1).float()
-        point_coords, point_labels = generate_point_prompt(batch_labels_, args)
-        bg_labels = point_labels[point_labels == 0]
-        bg_coords = point_labels[point_labels == 0]
-        fg_labels = point_labels[point_labels == 1]
-        fg_coords = point_labels[point_labels == 1]
-
-
         class_prompts = [i for i in range(num_classes)]
-        point_prompts = {"foreground": list(fg_coords), "background": list(bg_coords)}
+        point_prompts = {"foreground": [], "background": []}
         pred_volume = iterate_all(
             pred_volume,  # 1 x 11 x H x W x S
             n_z_slices,
@@ -145,6 +139,8 @@ def vista_slice_inference(
             cachedEmbedding,
             cached_pred,
             device,
+            args=cmd_args,
+            ground_truth=kwargs.pop('ground_truth')
         )
     elif (point_prompts is None) and (class_prompts is not None):
         if class_prompts:
@@ -182,6 +178,20 @@ def vista_slice_inference(
             device,
         )
     else:
+        unique_labels = torch.unique(labels)
+        batch_labels_ = torch.stack([labels == unique_labels[i] for i in range(len(unique_labels))], dim=1).float()
+        point_coords, point_labels = generate_point_prompt(batch_labels_, args)
+        new_label_shape = (point_labels.shape[0], -1)
+        new_coord_shape = (point_coords.shape[0], -1, 2)
+
+        bg_labels = point_labels[point_labels == 0].reshape(new_label_shape)
+        bg_coords = point_labels[point_labels == 0].reshape(new_coord_shape)
+        fg_labels = point_labels[point_labels == 1].reshape(new_label_shape)
+        fg_coords = point_labels[point_labels == 1].reshape(new_coord_shape)
+        point_prompts = {
+            'foreground': list(),
+            'background': list()
+        }
         pred_volume = update_slice(
             pred_volume,
             n_z_slices,
@@ -238,8 +248,8 @@ def update_slice(
         original_affine,
         device,
 ):
-    z_indices = [p[2] + (9 // 2) for p in point_prompts["foreground"]]
-    z_indices.extend([p[2] + (9 // 2) for p in point_prompts["background"]])
+    z_indices = [p[2] + (27 // 2) for p in point_prompts["foreground"]]
+    z_indices.extend([p[2] + (27 // 2) for p in point_prompts["background"]])
     z_indices = list(set(z_indices))
 
     pred_volume = pred_volume.argmax(1).unsqueeze(1)
@@ -288,28 +298,39 @@ def update_slice(
     return pred_volume
 
 
+
+
+
 def iterate_all(
-        pred_volume,    # 1 x 11 x H x W x S
-        n_z_slices,
-        n_z_before_pad,
-        inputs_l,       # 1 x H x W x (S + 2z)
-        class_prompts,
-        point_prompts,
-        predictor,
-        post_pred,
-        cachedEmbedding,
-        cached_pred,
-        device,
+        pred_volume: MetaTensor,    # 1 x 11 x H x W x S
+        n_z_slices: int,
+        n_z_before_pad: int,
+        inputs_l: MetaTensor,       # 1 x H x W x (S + 2z)
+        class_prompts: list[int],
+        point_prompts: dict[str, MetaTensor],
+        predictor: torch.nn.Module,
+        post_pred: Callable,
+        cachedEmbedding: Optional[list[MetaTensor]],
+        cached_pred: Optional[list[MetaTensor]],
+        device: str | torch.device,
+        args: Namespace,
+        ground_truth: Optional[MetaTensor] = None
 ):
-    start_range = (
-        range(n_z_slices // 2, min((n_z_slices // 2 + n_z_before_pad), len(cachedEmbedding)))
-        if cachedEmbedding
-        else range(n_z_slices // 2, n_z_slices // 2 + n_z_before_pad)
-    )
+    start_ids = n_z_slices // 2
+    end_ids = start_ids + n_z_before_pad
+    if cachedEmbedding:
+        end_ids = min(end_ids, len(cachedEmbedding))
+    start_range = range(start_ids, end_ids)
+
     for start_idx in start_range:
-        inputs = inputs_l[..., start_idx - n_z_slices // 2: start_idx + n_z_slices // 2 + 1].permute(2, 0, 1)
+        left_ptr = start_idx - n_z_slices // 2
+        right_ptr = start_idx + n_z_slices // 2 + 1
+        inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
         if device == "cuda" or (isinstance(device, torch.device) and device.type == "cuda"):
             inputs = inputs.cuda()
+
+        if ground_truth is not None:
+            point_prompts = IUtils.get_point_prompt_for_eval(ground_truth, args)
         data, unique_labels = prepare_sam_val_input(inputs, class_prompts, point_prompts, start_idx, device=device)
         predictor = predictor.eval()
         with autocast():

@@ -20,7 +20,7 @@ from training.vista_2pt5d.model import sam_model_registry
 
 from inference import other
 from inference.lib import Processor
-labels = [
+LABELS = [
         "Background",
         'RightAtrium',
         'RightVentricle',
@@ -64,7 +64,7 @@ def load_model(ckpt_path, model: nn.Module) -> nn.Module:
 
 @torch.no_grad()
 def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, args) -> list[torch.Tensor]:
-    global labels
+    global LABELS
     def _one_slice(_model: nn.Module, _slice_image) -> torch.Tensor:
         _slice_pred = _model(_slice_image)
         return _slice_pred[0]['high_res_logits']
@@ -91,7 +91,7 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
     
     if args.wandb:
         wandb.init(project='show_seg', name=f'{model_type}_{model_date}')
-    label_map: dict[int, str] = {idx: key for idx, key in enumerate(labels)}
+    label_map: dict[int, str] = {idx: key for idx, key in enumerate(LABELS)}
     best_dice = -1
     best_image_obj = None
 
@@ -100,15 +100,15 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
         image_name: str = image_path.split('/')[-1]
         label_path: str = dpack['label']
         image, affine = processor(image_path, True)
-        label: MetaTensor = processor(label_path, is_label=True)
+        label: MetaTensor = processor(label_path, is_label=True)  # 1 x H x W x S
         image: MetaTensor = image.cuda().unsqueeze(0)
 
         mask3d: MetaTensor = other.vista_slice_inference(
             image, model, 'cuda', n_z_slices=args.roi_z_iter,
-            labels=labels, computeEmbedding=False,
+            labels=LABELS, computeEmbedding=False,
             class_prompts=args.class_prompts, point_prompts=args.point_prompts,
             cached_data=False, cachedEmbedding=False,
-            original_affine=affine
+            original_affine=affine, ground_truth=label, cmd_args=args
         )
         fully_dice = .0
 

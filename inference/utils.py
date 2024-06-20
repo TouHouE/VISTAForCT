@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import random
 from copy import deepcopy
+from monai.data import MetaTensor
+from argparse import Namespace
 
 
 def apply_coords_torch(coords: np.ndarray, original_size, sam_image_size) -> np.ndarray:
@@ -96,6 +98,43 @@ def generate_point_prompt(batch_labels_, args, points_pos=None, points_neg=None,
     return point_coords, point_label
 
 
+def get_point_prompt_for_eval(ground_truth: MetaTensor, args: Namespace) -> dict[str, list[torch.Tensor]]:
+    """
+
+    @param ground_truth: This shape is (H, W)
+    @param args: must including
+        - @param num_prompt
+        - @param nc
+        - @param max_points
+        - @param sam_image_size
+    @return: A dictionary with keys `foreground` and `background` mapping to the point coordinate.
+    """
+    unique_labels = torch.unique(ground_truth).long()
+
+    if len(unique_labels) > args.num_prompt:
+        idxs = random.sample(range(len(unique_labels)), args.num_prompt)
+        idxs = torch.tensor(idxs)
+        unique_labels = unique_labels[idxs]
+    if len(unique_labels) < args.num_prompt:
+        while len(unique_labels) < args.num_prompt:
+            unique_labels = torch.cat([unique_labels, unique_labels], 0)
+        unique_labels = unique_labels[: args.num_prompt]
+    background_labels = list(set(range(1, args.nc)) - set(unique_labels.cpu().numpy()))
+    random.shuffle(background_labels)
+    unique_labels = torch.cat([unique_labels, torch.tensor(background_labels[:4])])
+    batch_labels_ = torch.stack([ground_truth == unique_labels[i] for i in range(len(unique_labels))], dim=1).float()
+    point_coords, point_labels = generate_point_prompt(batch_labels_, args)
+    new_coord_shape = (point_coords.shape[0], -1, 2)
+    new_label_shape = (point_labels.shape[0], -1)
+    fg_coord = point_coords[point_labels == 1].reshape(new_coord_shape)
+    bg_coord = point_coords[point_labels == 0].reshape(new_coord_shape)
+    return {
+        'foreground': [fg_coord],
+        'background': [bg_coord]
+    }
+
+
+
 def prepare_slice_data(image, args):
     unique_labels = torch.tensor([i for i in range(1, args.nc)]).cuda()
     labels_prompt = unique_labels.unsqueeze(-1)
@@ -113,9 +152,9 @@ if __name__ == '__main__':
 
     }
     unique_labels = torch.tensor([i for i in range(1, args.nc)])
-    labels = torch.randint(0, 11, (64, 64))
+    LABELS = torch.randint(0, 11, (64, 64))
 
     # preprocess make the size of lable same as high_res_logit
-    batch_labels = torch.stack([labels == unique_labels[i] for i in range(len(unique_labels))], dim=0).float()
+    batch_labels = torch.stack([LABELS == unique_labels[i] for i in range(len(unique_labels))], dim=0).float()
 
     out = generate_point_prompt(batch_labels, args)
