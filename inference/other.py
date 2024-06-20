@@ -88,7 +88,7 @@ def vista_slice_inference(
     if isinstance(inputs, MetaTensor):
         temp_meta = MetaTensor([]).copy_meta_from(inputs, copy_attr=False)
 
-    labels = kwargs.pop("labels")
+    # labels = kwargs.pop("labels")
     num_classes = len(labels)
 
     inputs_l = inputs  # 1 x 1 x H x W x S
