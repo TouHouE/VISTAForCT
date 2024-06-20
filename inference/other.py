@@ -1,5 +1,5 @@
 # from collections import Sequence
-from typing import Sequence, Callable, Any
+from typing import Sequence, Callable, Any, Optional
 from monai.data import MetaTensor
 import torch
 from monai.transforms import Activations, AsDiscrete, Compose
@@ -7,10 +7,13 @@ from monai.utils import convert_to_dst_type
 from torch.cuda.amp import autocast
 from torch.nn import functional as F
 import numpy as np
+from inference.utils import generate_point_prompt
 
-
-def prepare_sam_val_input(inputs, class_prompts, point_prompts, start_idx, original_affine=None, device=None,
-                          sam_image_size=512):
+def prepare_sam_val_input(
+        inputs: MetaTensor,
+        class_prompts: list[int] | torch.Tensor, point_prompts: dict[str, list],
+        start_idx: int,
+        original_affine: Optional[MetaTensor] = None, device=None, sam_image_size: int = 512):
     # Don't exclude background in val but will ignore it in metric calculation
     H, W = inputs.shape[1:]
     foreground_all = point_prompts["foreground"]
@@ -28,8 +31,8 @@ def prepare_sam_val_input(inputs, class_prompts, point_prompts, start_idx, origi
         volume_point_coords.append(cp)
         volume_point_labels.append(0)
 
-    point_coords = [[]]
-    point_labels = [[]]
+    point_coords: list[list] = [[]]
+    point_labels: list[list] = [[]]
 
     # Reoriente point coord if not in RAS
     if original_affine is not None:
@@ -77,6 +80,7 @@ def vista_slice_inference(
         predictor: Callable[..., torch.Tensor | Sequence[torch.Tensor] | dict[Any, torch.Tensor]],
         device: torch.device | str | None = None,
         n_z_slices: int = 9,
+        labels: torch.Tensor | MetaTensor = None,
         *args: Any,
         **kwargs: Any,
 ) -> torch.Tensor | tuple[torch.Tensor, ...] | dict[Any, torch.Tensor]:
@@ -118,8 +122,17 @@ def vista_slice_inference(
 
     if (class_prompts is None) and (point_prompts is None):
         # Everything button: no class, no point prompts: iterate all slices
+        unique_labels = torch.unique(labels)
+        batch_labels_ = torch.stack([labels == unique_labels[i] for i in range(len(unique_labels))], dim=1).float()
+        point_coords, point_labels = generate_point_prompt(batch_labels_, args)
+        bg_labels = point_labels[point_labels == 0]
+        bg_coords = point_labels[point_labels == 0]
+        fg_labels = point_labels[point_labels == 1]
+        fg_coords = point_labels[point_labels == 1]
+
+
         class_prompts = [i for i in range(num_classes)]
-        point_prompts = {"foreground": [], "background": []}
+        point_prompts = {"foreground": list(fg_coords), "background": list(bg_coords)}
         pred_volume = iterate_all(
             pred_volume,  # 1 x 11 x H x W x S
             n_z_slices,

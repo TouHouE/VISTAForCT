@@ -14,6 +14,8 @@ import os
 import random
 import time
 from copy import deepcopy
+from argparse import Namespace
+from vista_2pt5d.model import sam_model_registry, Vista2pt5D
 
 import numpy as np
 import torch
@@ -49,12 +51,20 @@ def sample_points(labelpoints, n_points):
 
 def generate_point_prompt(batch_labels_, args, points_pos=None, points_neg=None, previous_pred=None):
     max_point = args.max_points
-    Np = (
-        points_pos
-        if points_pos is not None
-        else min(max_point, int(np.abs(random.gauss(mu=0, sigma=max_point // 2))) + 1)
-    )
-    Nn = points_neg if points_neg is not None else min(max_point, int(np.abs(random.gauss(mu=0, sigma=max_point // 2))))
+    if points_pos is not None:
+        Np = points_pos
+    else:
+        gauss = random.gauss(mu=0, sigma=max_point // 2)
+        gauss_p = int(np.abs(gauss)) + 1
+        Np = min(max_point, gauss_p)
+
+    if points_neg is not None:
+        Nn = points_neg
+    else:
+        gauss = random.gauss(mu=0, sigma=max_point // 2)
+        gauss_p = int(np.abs(gauss))
+        Nn = min(max_point, gauss_p)
+
     # To follow original SAM, with equal probability either a foreground point
     # is selected randomly for the target mask
     _point = []
@@ -106,15 +116,15 @@ def generate_point_prompt(batch_labels_, args, points_pos=None, points_neg=None,
     return point_coords, point_label
 
 
-def prepare_sam_training_input(inputs, labels, args, model):
-    unique_labels = torch.unique(labels).as_tensor().long()
+def prepare_sam_training_input(inputs: torch.Tensor, labels: torch.Tensor, args: Namespace, model: Vista2pt5D):
+    unique_labels = torch.unique(labels).long()
 
     if args.skip_bk:
         unique_labels = unique_labels[1:]
 
     if len(unique_labels) == 0:
         prepared_input = [{"image": inputs, "original_size": tuple(labels.shape)}]
-        batch_labels = torch.zeros(1, 1, args.sam_image_size // 4, args.sam_image_size // 4).cuda(args.rank)
+        batch_labels = torch.zeros(1, 1, args.sam_image_size // 4, args.sam_image_size // 4)
         skip = True
         return prepared_input, batch_labels, None, skip
 
@@ -131,10 +141,12 @@ def prepare_sam_training_input(inputs, labels, args, model):
     # add 4 background labels to every batch
     background_labels = list(set([i for i in range(1, args.nc)]) - set(unique_labels.cpu().numpy()))
     random.shuffle(background_labels)
-    unique_labels = torch.cat([unique_labels, torch.tensor(background_labels[:4]).cuda(args.rank)])
+    unique_labels = torch.cat([unique_labels, torch.tensor(background_labels[:4])])
 
     # preprocess make the size of label same as low_res_logit
-    batch_labels_ = torch.stack([labels == unique_labels[i] for i in range(len(unique_labels))], dim=0).float()
+    # The shape is (len(unique_labels), B, H, W)
+    batch_labels_ = torch.stack([labels == unique_labels[i] for i in range(len(unique_labels))], dim=1).float()
+    print(f'Shape right now: {batch_labels_.shape}')
 
     if args.distributed:
         batch_labels = model.module.preprocess(batch_labels_, is_input=False)
@@ -161,7 +173,7 @@ def prepare_sam_training_input(inputs, labels, args, model):
                 prepared_input[0].pop("point_coords")
                 prepared_input[0].pop("point_labels")
 
-    return prepared_input, batch_labels.unsqueeze(1).cuda(args.rank), batch_labels_, False
+    return prepared_input, batch_labels.unsqueeze(1), batch_labels_, False
 
 
 def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
@@ -757,3 +769,21 @@ def run_training(
     print("Training Finished !, Best Accuracy: ", val_acc_max, "at epoch", best_epoch)
 
     return val_acc_max
+
+
+if __name__ == '__main__':
+    cargs = Namespace(
+        skip_bk=False, sam_image_size=64, num_prompt=32, nc=11, distributed=False, label_prompt=True,
+        point_prompt=True, drop_label_prob=.5, drop_point_prob=.5, max_points=8
+    )
+    model = sam_model_registry['vit_b'](
+        image_size=cargs.sam_image_size,
+        encoder_in_chans=81,
+        patch_embed_3d=True
+    )
+    B = 1
+    images = torch.randn((B, 1, cargs.sam_image_size, cargs.sam_image_size, 27))
+    labels = torch.randint(0, 11, (B, cargs.sam_image_size, cargs.sam_image_size))
+    prepare_data, target, target_org, boolean = prepare_sam_training_input(images.squeeze(), labels.squeeze(), cargs, model)
+    # print(prepare_data['image'].shape, prepare_data['labels'].shape)
+    # print(target.shape)
