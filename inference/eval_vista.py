@@ -104,7 +104,7 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
         image: MetaTensor = image.cuda().unsqueeze(0)
 
         mask3d: MetaTensor = other.vista_slice_inference(
-            image, model, 'cuda', cmd_args=args, n_z_slices=args.roi_z_iter,
+            image, model, args, 'cuda', n_z_slices=args.roi_z_iter,
             labels=LABELS, computeEmbedding=False,
             class_prompts=args.class_prompts, point_prompts=args.point_prompts,
             cached_data=False, cachedEmbedding=False,
