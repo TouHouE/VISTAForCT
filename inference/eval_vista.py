@@ -104,11 +104,11 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
         image: MetaTensor = image.cuda().unsqueeze(0)
 
         mask3d: MetaTensor = other.vista_slice_inference(
-            image, model, 'cuda', n_z_slices=args.roi_z_iter,
+            image, model, 'cuda', cmd_args=args, n_z_slices=args.roi_z_iter,
             labels=LABELS, computeEmbedding=False,
             class_prompts=args.class_prompts, point_prompts=args.point_prompts,
             cached_data=False, cachedEmbedding=False,
-            original_affine=affine, ground_truth=label, cmd_args=args
+            original_affine=affine, ground_truth=label
         )
         fully_dice = .0
 
