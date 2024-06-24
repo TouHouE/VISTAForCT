@@ -238,6 +238,43 @@ class Vista2pt5D(nn.Module):
         masks = masks[..., : original_size[0], : original_size[1]]
         return masks
 
+    def new_preprocess(self, x: torch.Tensor, is_input=True) -> torch.Tensor:
+        """
+            The function for this method is almost like preprocess(torch.Tensor, bool), but its suite on batch input.
+        @param x: (B, z_roi, H, W) or (B, NC, H, W)
+        @param is_input: `True` for image, `False` for supervised-mask
+        @return:  (B, z_roi * 3, sam_H, sam_W) for image or (B, NC, sam_H / 4, sam_W / 4) for supervised-mask
+        """
+        b, c, h, w = x.shape
+        if is_input:
+            if c == 1:
+                x = (x.squeeze(0) * 255.0 - self.pixel_mean) / self.pixel_std
+                x = x.unsqueeze(0)
+            else:
+                # permute axis from (B C H W) to (C B H W)
+                x = x.permute(1, 0, 2, 3)
+                # Let the shape maintain to (3, 1, 1 ,1)
+                mp, ms = self.pixel_mean.unsqueeze(1), self.pixel_std.unsqueeze(1)
+                x = torch.cat([(x[_slice] * 255.0 - mp) / mp for _slice in range(c)], dim=0)
+                # let x axis back to (B, C*3, H, W)
+                x = x.permute(1, 0, 2, 3)
+        target_length = max(h, w)
+        pad_h = target_length - h
+        pad_w = target_length - w
+        x = F.pad(x, (0, pad_w, 0, pad_h))
+
+        if is_input:
+            x = F.interpolate(
+                x,
+                (self.image_encoder.img_size, self.image_encoder.img_size),
+                mode='bilinear', aligh_corners=False
+            )
+        else:
+            x = F.interpolate(
+                x, (self.image_encoder.img_size // 4, self.image_encoder.img_size // 4), mode="nearest"
+            )
+        return x
+
     def preprocess(self, x: torch.Tensor, is_input=True) -> torch.Tensor:
         """Normalize pixel values and pad to a square input."""
         if is_input:

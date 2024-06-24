@@ -22,7 +22,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn.parallel
 import torch.utils.data.distributed
-from monai.data import decollate_batch
+from monai.data import decollate_batch, MetaTensor
 from monai.metrics import compute_dice
 from tensorboardX import SummaryWriter
 from torch.cuda.amp import GradScaler, autocast
@@ -50,6 +50,15 @@ def sample_points(labelpoints, n_points):
 
 
 def generate_point_prompt(batch_labels_, args, points_pos=None, points_neg=None, previous_pred=None):
+    """
+
+    @param batch_labels_:
+    @param args:
+    @param points_pos:
+    @param points_neg:
+    @param previous_pred:
+    @return:
+    """
     max_point = args.max_points
     if points_pos is not None:
         Np = points_pos
@@ -69,6 +78,7 @@ def generate_point_prompt(batch_labels_, args, points_pos=None, points_neg=None,
     # is selected randomly for the target mask
     _point = []
     _point_label = []
+    print('batch_labels_', batch_labels_.shape)
     b, h, w = batch_labels_.shape
     device = batch_labels_.device
     for i in range(b):
@@ -117,37 +127,63 @@ def generate_point_prompt(batch_labels_, args, points_pos=None, points_neg=None,
 
 
 def prepare_sam_training_input(inputs: torch.Tensor, labels: torch.Tensor, args: Namespace, model: Vista2pt5D):
-    unique_labels = torch.unique(labels).long()
+    """
 
+    @param inputs: (B) roi_z x H x W
+    @param labels: (B) H x W
+    @param args:
+    @param model:
+    @return:
+    """
+    # Shape with Nc
+    unique_labels: torch.Tensor | MetaTensor = torch.unique(labels)
+    if hasattr(unique_labels, 'as_tensor'):
+        unique_labels: torch.Tensor = unique_labels.as_tensor().long()
+    else:
+        unique_labels: torch.Tensor = unique_labels.long()
+
+    nc_in_mask: int = len(unique_labels)
     if args.skip_bk:
         unique_labels = unique_labels[1:]
 
-    if len(unique_labels) == 0:
-        prepared_input = [{"image": inputs, "original_size": tuple(labels.shape)}]
-        batch_labels = torch.zeros(1, 1, args.sam_image_size // 4, args.sam_image_size // 4)
+    if nc_in_mask == 0:
+        prepared_input = list()
+        for batch_idx, (_inputs, _labels) in enumerate(zip(inputs, labels)):
+            prepared_input.append({
+                'image': _inputs,
+                'original_size': tuple(_labels.shape)
+            })
+        # prepared_input = [{"image": inputs, "original_size": tuple(labels.shape)}]
+        batch_labels = torch.zeros(batch_idx + 1, 1, args.sam_image_size // 4, args.sam_image_size // 4)
         skip = True
         return prepared_input, batch_labels, None, skip
 
     # random sample args.num_prompt prompts, this will help to manage the GPU memory upper bound.
-    if len(unique_labels) > args.num_prompt:
-        idxs = random.sample(range(len(unique_labels)), args.num_prompt)
-        idxs = torch.tensor(idxs)
-        unique_labels = unique_labels[idxs]
-    if len(unique_labels) < args.num_prompt:
-        while len(unique_labels) < args.num_prompt:
+    if nc_in_mask > args.num_prompt:
+        # random some category in nc_in_mask
+        idxs: int = random.sample(range(nc_in_mask), args.num_prompt)
+        idxs: torch.Tensor = torch.tensor(idxs)
+        unique_labels: torch.Tensor = unique_labels[idxs]
+
+    if (nc_in_mask := len(unique_labels)) < args.num_prompt:
+        # Cat unique_labels into unique_labels until the size of nc_in_mask(not unique now) >= num_prompt
+        while (nc_in_mask := len(unique_labels)) < args.num_prompt:
             unique_labels = torch.cat([unique_labels, unique_labels], 0)
+        # make sure size of unique_labels == num_prompt
         unique_labels = unique_labels[: args.num_prompt]
 
     # add 4 background labels to every batch
-    background_labels = list(set([i for i in range(1, args.nc)]) - set(unique_labels.cpu().numpy()))
+    # The background labels is meaning
+    background_labels = list(set(range(1, args.nc)) - set(unique_labels.cpu().numpy()))
     random.shuffle(background_labels)
     unique_labels = torch.cat([unique_labels, torch.tensor(background_labels[:4])])
 
     # preprocess make the size of label same as low_res_logit
-    # The shape is (len(unique_labels), B, H, W)
-    batch_labels_ = torch.stack([labels == unique_labels[i] for i in range(len(unique_labels))], dim=1).float()
+    # The shape is (B, Nc, H, W)
+    batch_labels_ = torch.cat([labels == unique_labels[i] for i in range(len(unique_labels))], dim=1).float()
     print(f'Shape right now: {batch_labels_.shape}')
 
+    # The shape will become (B, NC, sam_H / 4, sam_W / 4)
     if args.distributed:
         batch_labels = model.module.preprocess(batch_labels_, is_input=False)
     else:
@@ -155,25 +191,49 @@ def prepare_sam_training_input(inputs: torch.Tensor, labels: torch.Tensor, args:
 
     # TODO: we currently only use class-label and points prompt.
 
-    prepared_input = [{"image": inputs, "original_size": tuple(labels.shape)}]
-    if args.label_prompt:
-        labels_prompt = unique_labels.unsqueeze(-1)
-        prepared_input[0].update({"labels": labels_prompt})
-
-    if args.point_prompt:
-        point_coords, point_labels = generate_point_prompt(batch_labels_, args)
-        prepared_input[0].update({"point_coords": point_coords, "point_labels": point_labels})
-
-    if args.label_prompt and args.point_prompt:
-        # if we use both two kinds of prompts, then we randomly drop one kind.
-        if random.uniform(0, 1) < args.drop_label_prob:
-            prepared_input[0].pop("labels")
-        else:
+    prepared_input = list()
+    for batch_idx, (_inputs, _labels, _batch_labels_) in enumerate(zip(inputs, labels, batch_labels_)):
+        prepared_input.append({
+            'image': _inputs,
+            'original_size': tuple(_labels.shape)
+        })
+        if args.label_prompt:
+            labels_prompt = unique_labels.unsqueeze(-1)
+            prepared_input[batch_idx].update({'labels': labels_prompt})
+        if args.point_prompt:
+            point_coords, point_labels = generate_point_prompt(_batch_labels_, args)
+            prepared_input[batch_idx].update({
+                'point_coords': point_coords,
+                'point_labels': point_labels
+            })
+        if args.label_prompt and args.point_prompt:
+            if random.uniform(0, 1) < args.drop_label_prob:
+                prepared_input[batch_idx].pop('labels')
+                continue
             if random.uniform(0, 1) < args.drop_point_prob:
-                prepared_input[0].pop("point_coords")
-                prepared_input[0].pop("point_labels")
+                prepared_input[batch_idx].pop('point_coords')
+                prepared_input[batch_idx].pop('point_labels')
+    return prepared_input, batch_labels, batch_labels_, False
 
-    return prepared_input, batch_labels.unsqueeze(1), batch_labels_, False
+    # prepared_input = [{"image": inputs, "original_size": tuple(labels.shape)}]
+    # if args.label_prompt:
+    #     labels_prompt = unique_labels.unsqueeze(-1)
+    #     prepared_input[0].update({"labels": labels_prompt})
+    #
+    # if args.point_prompt:
+    #     point_coords, point_labels = generate_point_prompt(batch_labels_, args)
+    #     prepared_input[0].update({"point_coords": point_coords, "point_labels": point_labels})
+    #
+    # if args.label_prompt and args.point_prompt:
+    #     # if we use both two kinds of prompts, then we randomly drop one kind.
+    #     if random.uniform(0, 1) < args.drop_label_prob:
+    #         prepared_input[0].pop("labels")
+    #     else:
+    #         if random.uniform(0, 1) < args.drop_point_prob:
+    #             prepared_input[0].pop("point_coords")
+    #             prepared_input[0].pop("point_labels")
+    #
+    # return prepared_input, batch_labels.unsqueeze(1), batch_labels_, False
 
 
 def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
@@ -188,10 +248,6 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
         labels_l = batch_data["label"]
         # TODO: we only support batch_size = 1 for data loader.        
         B = inputs_l.shape[0]
-        if B == 1:
-            inputs_l = inputs_l.squeeze()
-            labels_l = inputs_l.squeeze()
-
         n_z_before_pad = labels_l.shape[-1]
 
         n_slice = args.roi_z_iter
@@ -207,55 +263,32 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
 
             left_ptr = start_idx - n_slice // 2
             right_ptr = start_idx + n_slice // 2 + 1
-            if B == 1:
-                inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
-            else:
-                inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3).squeeze(1)
+            inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2 ,3).squeeze(1)
+            # if B == 1:
+            #     print(inputs_l.shape)
+            #     inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
+            # else:
+            #     inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3)
             # we only need the label for the center slice
             labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
             
 
-            data: torch.Tensor | list[torch.Tensor] = []
-            target: torch.Tensor | list[torch.Tensor] = []
-            target_original: torch.Size | list[torch.Size] = []
-            skip: bool = None
-
-            if B == 1:
-                data, target, target_original, skip = prepare_sam_training_input(
-                    inputs.cuda(args.rank), labels.cuda(args.rank), args, model
-                )
-            else:
-                for b in range(B):
-                    # print(f'inputs[{b}].shape: {inputs[b].shape}')
-                    train_pack = prepare_sam_training_input(
-                        inputs[b].cuda(args.rank), labels[b].squeeze(0).cuda(args.rank), args, model
-                    )
-                    data.append(train_pack[0])
-                    target.append(train_pack[1])
-                    target_original.append(train_pack[2])
-                    skip = skip
+            # data: torch.Tensor | list[torch.Tensor] = []
+            # target: torch.Tensor | list[torch.Tensor] = []
+            # target_original: torch.Size | list[torch.Size] = []
+            # skip: bool = None
+            data, target, target_original, skip = prepare_sam_training_input(
+                inputs.cuda(args.rank), labels.cuda(args.rank), args, model
+            )
 
             for param in model.parameters():
                 param.grad = None
 
-            outputs = list()
-
             with autocast(enabled=args.amp):
-                if B == 1:
-                    outputs = model(data, is_train=True)
-                else:
-                    #outputs = model(data, is_train=True)
-                    #print(outputs)
-                    for _data in data:
-                        # outputs = [model(_data, is_train=True) for _data in data]
-                        # print(f'{_data[0]["image"].shape}')
-                        outputs.append(model(_data, is_train=True))
-                        # outputs.append(out)
-            if B == 1:
-                loss = loss_func(outputs[0]["low_res_logits"], target)
-            else:
-                outputs = [_[0]['low_res_logits'] for _ in outputs]                
-                loss = loss_func(torch.cat(outputs, dim=0), torch.cat(target, dim=0))
+                outputs = model(data, is_train=True)
+            pred_mask = torch.stack([_out['low_res_logits'] for _out in outputs], dim=0)
+            loss = loss_func(pred_mask, target)
+
             if skip:
                 loss = loss * 0.0
 
@@ -773,8 +806,8 @@ def run_training(
 
 if __name__ == '__main__':
     cargs = Namespace(
-        skip_bk=False, sam_image_size=64, num_prompt=32, nc=11, distributed=False, label_prompt=True,
-        point_prompt=True, drop_label_prob=.5, drop_point_prob=.5, max_points=8
+        skip_bk=False, sam_image_size=128, num_prompt=37, nc=11, distributed=False, label_prompt=True,
+        point_prompt=True, drop_label_prob=.5, drop_point_prob=.5, max_points=11
     )
     model = sam_model_registry['vit_b'](
         image_size=cargs.sam_image_size,
@@ -783,7 +816,7 @@ if __name__ == '__main__':
     )
     B = 1
     images = torch.randn((B, 1, cargs.sam_image_size, cargs.sam_image_size, 27))
-    labels = torch.randint(0, 11, (B, cargs.sam_image_size, cargs.sam_image_size))
-    prepare_data, target, target_org, boolean = prepare_sam_training_input(images.squeeze(), labels.squeeze(), cargs, model)
+    LABELS = torch.randint(0, 11, (B, cargs.sam_image_size, cargs.sam_image_size))
+    prepare_data, target, target_org, boolean = prepare_sam_training_input(images.squeeze(), LABELS.squeeze(), cargs, model)
     # print(prepare_data['image'].shape, prepare_data['labels'].shape)
     # print(target.shape)

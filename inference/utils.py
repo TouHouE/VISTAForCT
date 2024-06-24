@@ -101,7 +101,7 @@ def generate_point_prompt(batch_labels_, args, points_pos=None, points_neg=None,
 def get_point_prompt_for_eval(ground_truth: MetaTensor, args: Namespace) -> dict[str, list[torch.Tensor]]:
     """
 
-    @param ground_truth: This shape is (H, W)
+    @param ground_truth: This shape is (B=1, H, W)
     @param args: must including
         - @param num_prompt
         - @param nc
