@@ -78,7 +78,6 @@ def generate_point_prompt(batch_labels_, args, points_pos=None, points_neg=None,
     # is selected randomly for the target mask
     _point = []
     _point_label = []
-    print('batch_labels_', batch_labels_.shape)
     b, h, w = batch_labels_.shape
     device = batch_labels_.device
     for i in range(b):
@@ -138,13 +137,13 @@ def prepare_sam_training_input(inputs: torch.Tensor, labels: torch.Tensor, args:
     # Shape with Nc
     unique_labels: torch.Tensor | MetaTensor = torch.unique(labels)
     if hasattr(unique_labels, 'as_tensor'):
-        unique_labels: torch.Tensor = unique_labels.as_tensor().long()
+        unique_labels: torch.LongTensor = unique_labels.as_tensor().long()
     else:
-        unique_labels: torch.Tensor = unique_labels.long()
+        unique_labels: torch.LongTensor = unique_labels.long()
 
     nc_in_mask: int = len(unique_labels)
     if args.skip_bk:
-        unique_labels = unique_labels[1:]
+        unique_labels: torch.LongTensor = unique_labels[1:]
 
     if nc_in_mask == 0:
         prepared_input = list()
@@ -163,12 +162,12 @@ def prepare_sam_training_input(inputs: torch.Tensor, labels: torch.Tensor, args:
         # random some category in nc_in_mask
         idxs: int = random.sample(range(nc_in_mask), args.num_prompt)
         idxs: torch.Tensor = torch.tensor(idxs)
-        unique_labels: torch.Tensor = unique_labels[idxs]
+        unique_labels: torch.LongTensor = unique_labels[idxs]
 
-    if (nc_in_mask := len(unique_labels)) < args.num_prompt:
+    if len(unique_labels) < args.num_prompt:
         # Cat unique_labels into unique_labels until the size of nc_in_mask(not unique now) >= num_prompt
-        while (nc_in_mask := len(unique_labels)) < args.num_prompt:
-            unique_labels = torch.cat([unique_labels, unique_labels], 0)
+        while len(unique_labels) < args.num_prompt:
+            unique_labels: torch.LongTensor = torch.cat([unique_labels, unique_labels], 0).long()
         # make sure size of unique_labels == num_prompt
         unique_labels = unique_labels[: args.num_prompt]
 
@@ -176,13 +175,11 @@ def prepare_sam_training_input(inputs: torch.Tensor, labels: torch.Tensor, args:
     # The background labels is meaning
     background_labels = list(set(range(1, args.nc)) - set(unique_labels.cpu().numpy()))
     random.shuffle(background_labels)
-    unique_labels = torch.cat([unique_labels, torch.tensor(background_labels[:4])])
+    unique_labels: torch.LongTensor = torch.cat([unique_labels, torch.tensor(background_labels[:4]).cuda(args.rank)]).long()
 
     # preprocess make the size of label same as low_res_logit
     # The shape is (B, Nc, H, W)
     batch_labels_ = torch.cat([labels == unique_labels[i] for i in range(len(unique_labels))], dim=1).float()
-    print(f'Shape right now: {batch_labels_.shape}')
-
     # The shape will become (B, NC, sam_H / 4, sam_W / 4)
     if args.distributed:
         batch_labels = model.module.preprocess(batch_labels_, is_input=False)
@@ -213,7 +210,7 @@ def prepare_sam_training_input(inputs: torch.Tensor, labels: torch.Tensor, args:
             if random.uniform(0, 1) < args.drop_point_prob:
                 prepared_input[batch_idx].pop('point_coords')
                 prepared_input[batch_idx].pop('point_labels')
-    return prepared_input, batch_labels, batch_labels_, False
+    return prepared_input, batch_labels.cuda(args.rank), batch_labels_, False
 
     # prepared_input = [{"image": inputs, "original_size": tuple(labels.shape)}]
     # if args.label_prompt:
@@ -263,30 +260,26 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
 
             left_ptr = start_idx - n_slice // 2
             right_ptr = start_idx + n_slice // 2 + 1
-            inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2 ,3).squeeze(1)
-            # if B == 1:
-            #     print(inputs_l.shape)
-            #     inputs = inputs_l[..., left_ptr: right_ptr].permute(2, 0, 1)
-            # else:
-            #     inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3)
-            # we only need the label for the center slice
-            labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
-            
+            # The shape from B (C=1) H W S -> B (C=1) H W (S=z_roi) -> B (C=1) (S=z_roi) H W
+            inputs = inputs_l[..., left_ptr: right_ptr].permute(0, 1, 4, 2, 3)
+            # Remove channel axis: B (C=1) (S=z_roi) H W -> B (S=z_roi) H W
+            inputs = inputs.squeeze(1)
 
-            # data: torch.Tensor | list[torch.Tensor] = []
-            # target: torch.Tensor | list[torch.Tensor] = []
-            # target_original: torch.Size | list[torch.Size] = []
-            # skip: bool = None
+            # we only need the label for the center slice
+            # B C H W S -> B C H W (S=z_roi) -> B C H W
+            labels = labels_l[..., left_ptr: right_ptr][..., n_slice // 2]
             data, target, target_original, skip = prepare_sam_training_input(
                 inputs.cuda(args.rank), labels.cuda(args.rank), args, model
             )
 
-            for param in model.parameters():
+            for param in model.parameters():  # Like optimizer.zero_grad(set_to_none=True)
                 param.grad = None
 
             with autocast(enabled=args.amp):
                 outputs = model(data, is_train=True)
-            pred_mask = torch.stack([_out['low_res_logits'] for _out in outputs], dim=0)
+            # not sure this operation is correct or not, i trying to cat at channels axis(maybe)
+            pred_mask = torch.cat([_out['low_res_logits'] for _out in outputs], dim=1)
+            pred_mask = pred_mask.permute(1, 0, 2, 3)
             loss = loss_func(pred_mask, target)
 
             if skip:
@@ -560,25 +553,14 @@ def val_epoch(model, loader, epoch, acc_func, args, iterative=False, post_label=
 
                 data: torch.Tensor | list[torch.Tensor] = []
                 target: torch.Tensor | list[torch.Tensor] = []
+                data, target, _ = prepare_sam_val_input_cp_only(
+                    inputs.cuda(args.rank), labels.cuda(args.rank), args
+                )
 
-                if B == 1:
-                    data, target, _ = prepare_sam_val_input_cp_only(inputs.cuda(args.rank), labels.cuda(args.rank), args)
-                else:
-                    inputs = inputs.cuda(args.rank)
-                    labels = labels.cuda(args.rank)
-
-                    for b in range(B):
-                        pack = prepare_sam_val_input_cp_only(inputs[b], labels[0], args)
-                        data.append(pack[0])
-                        target.append(pack[1])
 
                 with autocast(enabled=args.amp):
-                    if B == 1:
-                        outputs = model(data)
-                        logit = outputs[0]["high_res_logits"]
-                    else:
-                        outputs = [model(_data) for _data in data]
-                        logit = torch.stack([b_out[0]['high_res_logits'] for b_out in outputs], 0)
+                    outputs = model(data)
+                    logit = torch.cat([_out['high_res_logits'] for _out in outputs], dim=0)
 
                 y_pred = torch.stack(post_pred(decollate_batch(logit)), 0)
 
@@ -725,7 +707,7 @@ def run_training(
                 "loss: {:.4f}".format(train_loss),
                 "time {:.2f}s".format(time.time() - epoch_time),
             )
-        if args.rank == 0:
+
             if writer is not None:
                 writer.add_scalar("train_loss", train_loss, epoch)
             if run is not None:

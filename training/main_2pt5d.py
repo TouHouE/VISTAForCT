@@ -8,7 +8,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 import argparse
 import sys
 import warnings
