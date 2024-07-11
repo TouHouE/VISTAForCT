@@ -1,3 +1,5 @@
+from typing import Dict, List, Any
+
 import torch
 import numpy as np
 import random
@@ -98,7 +100,7 @@ def generate_point_prompt(batch_labels_, args, points_pos=None, points_neg=None,
     return point_coords, point_label
 
 
-def get_point_prompt_for_eval(ground_truth: MetaTensor, args: Namespace) -> dict[str, list[torch.Tensor]]:
+def get_point_prompt_for_eval(ground_truth: MetaTensor, args: Namespace) -> dict[str, list[np.ndarray]]:
     """
 
     @param ground_truth: This shape is (B=1, H, W)
@@ -109,7 +111,11 @@ def get_point_prompt_for_eval(ground_truth: MetaTensor, args: Namespace) -> dict
         - @param sam_image_size
     @return: A dictionary with keys `foreground` and `background` mapping to the point coordinate.
     """
-    unique_labels = torch.unique(ground_truth).long()
+    unique_labels: MetaTensor | torch.Tensor = torch.unique(ground_truth)
+    if isinstance(unique_labels, MetaTensor):
+        unique_labels: torch.LongTensor = unique_labels.as_tensor().long()
+    else:
+        unique_labels: torch.LongTensor = unique_labels.long()
 
     if len(unique_labels) > args.num_prompt:
         idxs = random.sample(range(len(unique_labels)), args.num_prompt)
@@ -122,12 +128,15 @@ def get_point_prompt_for_eval(ground_truth: MetaTensor, args: Namespace) -> dict
     background_labels = list(set(range(1, args.nc)) - set(unique_labels.cpu().numpy()))
     random.shuffle(background_labels)
     unique_labels = torch.cat([unique_labels, torch.tensor(background_labels[:4])])
-    batch_labels_ = torch.stack([ground_truth == unique_labels[i] for i in range(len(unique_labels))], dim=1).float()
+    batch_labels_ = torch.cat([ground_truth == unique_labels[i] for i in range(len(unique_labels))], dim=0).float()
+    # print(batch_labels_.shape)
     point_coords, point_labels = generate_point_prompt(batch_labels_, args)
-    new_coord_shape = (point_coords.shape[0], -1, 2)
+    print(point_coords.shape)
+    new_coord_shape = (-1, point_coords.shape[1], 2)
     new_label_shape = (point_labels.shape[0], -1)
     fg_coord = point_coords[point_labels == 1].reshape(new_coord_shape)
-    bg_coord = point_coords[point_labels == 0].reshape(new_coord_shape)
+    bg_coord = point_coords[point_labels == 0].reshape(new_label_shape)
+    print(fg_coord.shape, bg_coord.shape)
     return {
         'foreground': [fg_coord],
         'background': [bg_coord]

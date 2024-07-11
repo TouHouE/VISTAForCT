@@ -38,7 +38,8 @@ class Processor:
 
     def __call__(self, path, need_affine=False, is_label=False) -> torch.Tensor:
         if (img_folder := self.args.image_folder) is not None:
-            path = os.path.join(img_folder, path)
+            # print(img_folder, path)
+            path = os.path.join(img_folder, path) if os.name != 'nt' else rf'{img_folder}/{path}'
         image = self.loader(path)
         if need_affine:
             am = image.affine

@@ -1,3 +1,4 @@
+import re
 import os
 import json
 from collections import OrderedDict
@@ -20,6 +21,8 @@ from training.vista_2pt5d.model import sam_model_registry
 
 from inference import other
 from inference.lib import Processor
+from inference import metrics as IM
+
 LABELS = [
         "Background",
         'RightAtrium',
@@ -81,8 +84,8 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
             pred_group.append(slice_mask_pred)
         return processor.prepare_output(pred_group)
 
-    model_date: str = args.ckpt_path.split('/')[-2]
-    model_type: str = args.ckpt_path.split('/')[-3]
+    model_date: str = re.split('[/\\\]', args.ckpt_path)[-2]
+    model_type: str = re.split('[/\\\]', args.ckpt_path)[-3]
     model.eval()
     model.cuda()
     table: dict = dict()
@@ -90,12 +93,13 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
     print(f'Config: {args}')
     
     if args.wandb:
-        wandb.init(project='show_seg', name=f'{model_type}_{model_date}')
+        run_name = getattr(args, 'run_name', f'{model_type}_{model_date}')
+        wandb.init(project=args.project_name, name=run_name)
     label_map: dict[int, str] = {idx: key for idx, key in enumerate(LABELS)}
     best_dice = -1
     best_image_obj = None
 
-    for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list)):
+    for idx, dpack in tqdm(enumerate(data_pack_list), total=len(data_pack_list), disable=True):
         image_path: str = dpack['image']
         image_name: str = image_path.split('/')[-1]
         label_path: str = dpack['label']
@@ -110,17 +114,29 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
             cached_data=False, cachedEmbedding=False,
             original_affine=affine, ground_truth=label
         )
+        # breakpoint()
         fully_dice = .0
+        val_pred_mask3d = torch.zeros((len(LABELS), *mask3d.shape[-3:]))
+        val_gt_mask3d = torch.zeros_like(val_pred_mask3d)
+        for cidx, _ in enumerate(LABELS):
+            val_pred_mask3d[cidx][mask3d[0, 0].cpu() == cidx] = 1
+            val_gt_mask3d[cidx][label[0].cpu() == cidx] = 1
 
-        for s in range(image.shape[-1]):
+        slice_bar = tqdm(range(image.shape[-1]), total=image.shape[-1], desc=f'Image index:{idx}/{len(data_pack_list)}')
+        # print(compute_dice(y_pred=val_pred_mask3d.cpu(), y=val_gt_mask3d.cpu(), num_classes=len(LABELS)))
+        cm_builder = IM.ConfusionMatrixBuilder()
+        cnt = 0
+        for s in slice_bar:
+            cnt += 1
             # print(mask3d.shape)
             slice_mask: np.ndarray = mask3d[0, 0, ..., s].detach().cpu().numpy()
             slice_label: np.ndarray = label[0, ..., s].detach().cpu().numpy()
-            dice_group = compute_dice(y_pred=mask3d[0, ..., s].cpu(), y=label[..., s].cpu())
-            total_dice = torch.nansum(dice_group).item()
-            num_of_not_nan = args.nc - 1 - torch.sum(torch.isnan(dice_group).float()).item()
-            current_dice = total_dice / num_of_not_nan
-            fully_dice += current_dice
+
+            my_dice_list: list[float] = IM.my_dice(val_pred_mask3d[..., s], val_gt_mask3d[..., s], len(LABELS), ignore_bg=True)
+            cm_builder.update('pred', val_pred_mask3d[..., s])
+            cm_builder.update('gt', val_gt_mask3d[..., s])
+            avg_dice = sum(my_dice_list[1:]) / len(my_dice_list[1:])
+            fully_dice += avg_dice
 
             mask_pack = {
                     'predictions': {
@@ -135,17 +151,32 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
             image_obj = wandb.Image(
                     image[0, 0, ..., s].detach().cpu().numpy(),
                     masks=mask_pack,
-                    caption=f'slice:{s}-Dice: {current_dice:.5f}'
+                    caption=f'slice:{s}-Dice: {avg_dice:.5f}'
                     )
-            if args.wandb:    
-                wandb.log({image_name: image_obj, 'slice': s, 'path': image_path, 'dice score': current_dice})
-            if current_dice > best_dice:
-                best_dice = current_dice
+            bar_info = dict()
+            bar_info.update({_name: _dice for _name, _dice in zip(LABELS, my_dice_list)})
+
+            if args.wandb:
+                wandb_info = bar_info.copy()
+                wandb_info.update({image_name: image_obj, 'slice': s, 'path': image_path, 'avg dice': avg_dice})
+                wandb.log(wandb_info)
+            if avg_dice > best_dice:
+                best_dice: float = avg_dice
                 best_image_obj = image_obj
+
+            # bar_info['monai dice score'] = current_dice
+            slice_bar.set_postfix(bar_info)
+        print(f'Fully Dice: {fully_dice / cnt}')
         if args.wandb:
-            wandb.log({'best for each image': best_image_obj})
+            wandb_cm = wandb.plot.confusion_matrix(
+                preds=cm_builder.pred_seq, y_true=cm_builder.gt_seq,
+                class_names=LABELS
+            )
+            wandb.log({
+                f'best for each image': best_image_obj, f'confusion matrix-{image_name}': wandb_cm})
 
-
+        full_dice = IM.my_dice(y_true=val_gt_mask3d, y_pred=val_pred_mask3d, nc=11)
+        print(full_dice)
         # print(f'final shape: {mask3d.shape}')
         saver(mask3d.squeeze(0), mask3d.meta)
         # torch.save(mask3d, )
@@ -202,7 +233,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--debug', default=-1, type=int, required=False, help='greater than 0 into debug mode')
     parser.add_argument('--wandb', default=False, action='store_true')
-    parser.add_argument('--project_name', default='show_seg', required=False, help='using to wandb project')
+    parser.add_argument('--project_name', default='show_seg', help='using to wandb project')
+    parser.add_argument('--run_name', type=str, required=False)
     args = parser.parse_args()
     args.__setattr__('sam_image_size', args.image_size)
     make_sure_folder_exist(args)

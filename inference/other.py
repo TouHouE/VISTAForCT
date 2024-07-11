@@ -9,7 +9,7 @@ from torch.nn import functional as F
 import numpy as np
 from inference import utils as IUtils
 from argparse import Namespace
-
+# data, unique_labels = prepare_sam_val_input(inputs, class_prompts, point_prompts, start_idx, device=device)
 def prepare_sam_val_input(
         inputs: MetaTensor,
         class_prompts: list[int] | torch.Tensor, point_prompts: dict[str, list],
@@ -34,7 +34,7 @@ def prepare_sam_val_input(
 
     point_coords: list[list] = [[]]
     point_labels: list[list] = [[]]
-
+    # print(torch.stack(volume_point_coords, dim=0).shape)
     # Reoriente point coord if not in RAS
     if original_affine is not None:
         IJK2orientation = np.diag(original_affine[:3, :3])
@@ -43,8 +43,9 @@ def prepare_sam_val_input(
             for idx, c in enumerate(volume_point_coords):
                 volume_point_coords[idx][negative_indices[0]] = H - volume_point_coords[idx][negative_indices[0]]
                 volume_point_coords[idx][negative_indices[1]] = W - volume_point_coords[idx][negative_indices[1]]
-
+    # print(volume_point_coords)
     for idx, cp in enumerate(volume_point_coords):
+        # print(cp, start_idx)
         if cp[2] + 4 == start_idx:
             new_H = cp[0] * (sam_image_size / H)
             new_W = cp[1] * (sam_image_size / W)
@@ -329,10 +330,13 @@ def iterate_all(
         if device == "cuda" or (isinstance(device, torch.device) and device.type == "cuda"):
             inputs = inputs.cuda()
 
-        if ground_truth is not None:
+        if ground_truth is not None and args.point_prompts:
             gt = ground_truth[..., left_ptr: right_ptr][..., n_z_slices // 2]
             point_prompts = IUtils.get_point_prompt_for_eval(gt, args)
-        data, unique_labels = prepare_sam_val_input(inputs, class_prompts, point_prompts, start_idx, device=device)
+        data, unique_labels = prepare_sam_val_input(
+            inputs, class_prompts, point_prompts, start_idx,
+            device=device, sam_image_size=args.sam_image_size
+        )
         predictor = predictor.eval()
         with autocast():
             if cachedEmbedding:
