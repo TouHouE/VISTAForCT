@@ -143,13 +143,22 @@ def get_point_prompt_for_eval(ground_truth: MetaTensor, args: Namespace) -> dict
     }
 
 
-
 def prepare_slice_data(image, args):
     unique_labels = torch.tensor([i for i in range(1, args.nc)]).cuda()
     labels_prompt = unique_labels.unsqueeze(-1)
     prepare_input = [{'image': image, 'original_size': tuple(image.shape[-2:]), 'labels': labels_prompt}]
 
     return prepare_input, unique_labels
+
+
+def auto_device(
+        target_tensor: MetaTensor | torch.Tensor | torch.nn.Module,
+        target_device: str | torch.device
+) -> MetaTensor | torch.Tensor:
+    if target_device == "cuda" or (isinstance(target_device, torch.device) and target_device.type == "cuda"):
+        return target_tensor.cuda()
+    return target_tensor.cpu()
+
 
 if __name__ == '__main__':
     args = object()
