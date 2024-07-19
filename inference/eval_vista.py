@@ -170,7 +170,7 @@ def launch_eval(model: nn.Module, data_pack_list: list, processor: Processor, ar
         if args.wandb:
             wandb_cm = wandb.plot.confusion_matrix(
                 preds=cm_builder.pred_seq, y_true=cm_builder.gt_seq,
-                class_names=LABELS
+                class_names=LABELS, title=image_name
             )
             wandb.log({
                 f'best for each image': best_image_obj, f'confusion matrix-{image_name}': wandb_cm})

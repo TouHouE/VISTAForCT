@@ -565,6 +565,7 @@ def val_epoch(model, loader, epoch, acc_func, args, iterative=False, post_label=
                 y_pred = torch.stack(post_pred(decollate_batch(logit)), 0)
 
                 # TODO: we compute metric for each prompt for simplicity in validation.
+                print(y_pred.shape, target.shape)
                 acc_batch = compute_dice(y_pred=y_pred, y=target)
                 acc_sum, not_nans = (
                     torch.nansum(acc_batch).item(),

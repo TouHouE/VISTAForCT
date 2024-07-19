@@ -181,7 +181,7 @@ def vista_slice_inference(
     else:
         unique_labels = torch.unique(labels)
         batch_labels_ = torch.stack([labels == unique_labels[i] for i in range(len(unique_labels))], dim=1).float()
-        point_coords, point_labels = generate_point_prompt(batch_labels_, args)
+        point_coords, point_labels = IUtils.generate_point_prompt(batch_labels_, args)
         new_label_shape = (point_labels.shape[0], -1)
         new_coord_shape = (point_coords.shape[0], -1, 2)
 
@@ -301,7 +301,7 @@ def update_slice(
 
 
 
-
+@torch.no_grad()
 def iterate_all(
         pred_volume: MetaTensor,    # 1 x 11 x H x W x S
         n_z_slices: int,
@@ -355,8 +355,10 @@ def iterate_all(
         pred_idx = start_idx - (n_z_slices // 2) if not cachedEmbedding else start_idx
         # 1 x 11 x H x W x (S + 2z)
         pred_volume[0, unique_labels, ..., pred_idx] = y_pred
+        y_pred = y_pred.cpu()
+        del y_pred
     # print('pred_volume.shape before argmax and unsqueeze: ', pred_volume.shape)
-    pred_volume = pred_volume.argmax(1).unsqueeze(1).cpu()
+    pred_volume = pred_volume.cpu().argmax(1).unsqueeze(1)
     # print(f'pred_volume.shape become: {pred_volume.shape}')
     pred_volume = pred_volume.float()
 

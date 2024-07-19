@@ -28,7 +28,7 @@ def my_dice(y_true: torch.Tensor | MetaTensor, y_pred: torch.Tensor | MetaTensor
         nc: int = max(y_true.max(), y_pred.max())
     iter_nc = range(nc)
     results_dice_list = [.0] * nc
-    print(y_true.shape, y_pred.shape)
+    # print(y_true.shape, y_pred.shape)
     for c in iter_nc:
         y_true_nobg = torch.logical_and(y_true[c] == 1, y_true[0] == 0)
         y_pred_nobg = torch.logical_and(y_pred[c] == 1, y_true[0] == 0)
