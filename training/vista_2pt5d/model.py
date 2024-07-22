@@ -27,8 +27,11 @@ from torch import nn
 from torch.nn import functional as F
 from training.vista_2pt5d.vista_image_encoder import VistaImageEncoderViT
 from training.vista_2pt5d.vista_prompt_encoder import VistaPromptEncoder
+GetBatch: itemgetter = itemgetter(0)
 GetChannel: itemgetter = itemgetter(0)
 GetHeightWidth: itemgetter = itemgetter(-2, -1)
+
+
 class Vista2pt5D(nn.Module):
     mask_threshold: float = 0.5
     image_format: str = "RGB"
@@ -174,6 +177,9 @@ class Vista2pt5D(nn.Module):
                 masks=image_record.get("mask_inputs", None),
                 class_labels=image_record.get("labels", None),
             )
+            print('spe_emb.shape: ', sparse_embeddings.shape)
+            print('den_emb.shape: ', dense_embeddings.shape)
+
             low_res_masks, iou_predictions = self.mask_decoder(
                 image_embeddings=curr_embedding.unsqueeze(0),
                 image_pe=self.prompt_encoder.get_dense_pe(),
@@ -247,13 +253,13 @@ class Vista2pt5D(nn.Module):
         @return:  (B, z_roi * 3, sam_H, sam_W) for image or (B, NC, sam_H / 4, sam_W / 4) for supervised-mask
         """
         if is_input:
-            c = GetChannel(x.shape)
-            if c == 1:
+            _channel = GetChannel(x.shape)
+            if _channel == 1:
                 x = (x.squeeze(0) * 255.0 - self.pixel_mean) / self.pixel_std
                 x = x.unsqueeze(0)
             else:
                 mp, ms = self.pixel_mean, self.pixel_std
-                x = torch.cat([(x[_slice].unsqueeze(0) * 255.0 - mp) / ms for _slice in range(c)], dim=0)
+                x = torch.cat([(x[_slice].unsqueeze(0) * 255.0 - mp) / ms for _slice in range(_channel)], dim=0)
         h, w = GetHeightWidth(x.shape)
         target_length = max(h, w)
         pad_h = target_length - h
