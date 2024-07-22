@@ -220,10 +220,13 @@ class Attention(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, H, W, _ = x.shape
         # qkv with shape (3, B, nHead, H * W, C)
+        # the reshape and view operator are similarity, the different only at .view can only
+        # operate on contiguous tensor, reshape can ignore that potential issue
         qkv = self.qkv(x).reshape(B, H * W, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
         # q, k, v with shape (B * nHead, H * W, C)
         q, k, v = qkv.reshape(3, B * self.num_heads, H * W, -1).unbind(0)
 
+        # The k.transpose(-2, -1) is same as permute(0, 2, 1)
         attn = (q * self.scale) @ k.transpose(-2, -1)
 
         if self.use_rel_pos:
@@ -313,6 +316,9 @@ def get_rel_pos(q_size: int, k_size: int, rel_pos: torch.Tensor) -> torch.Tensor
     # Scale the coords with short length if shapes for q and k are different.
     q_coords = torch.arange(q_size)[:, None] * max(k_size / q_size, 1.0)
     k_coords = torch.arange(k_size)[None, :] * max(q_size / k_size, 1.0)
+    # Because of tensor operation, the q_coords - k_coords will calculate as:
+    # ans[i, j] = q_coords[i, :] - k_coords[:, j], but just with Nx1 Operator 1xM
+    # the shape become q_size, k_size
     relative_coords = (q_coords - k_coords) + (k_size - 1) * max(q_size / k_size, 1.0)
 
     return rel_pos_resized[relative_coords.long()]
