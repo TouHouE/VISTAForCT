@@ -16,17 +16,20 @@
 # LICENSE file in the root directory of this source tree.
 
 from functools import partial
-from typing import Any, Dict, List, Tuple
 from operator import itemgetter
+from typing import Any, Dict, List, Tuple, Optional
 
 import monai
 import torch
-from training.segment_anything.modeling import TwoWayTransformer
-from training.segment_anything.modeling.mask_decoder import MaskDecoder
 from torch import nn
 from torch.nn import functional as F
+
+from training.segment_anything.modeling import TwoWayTransformer
+from training.segment_anything.modeling.mask_decoder import MaskDecoder
+from training.vista_2pt5d.vae import VAEDecoder
 from training.vista_2pt5d.vista_image_encoder import VistaImageEncoderViT
 from training.vista_2pt5d.vista_prompt_encoder import VistaPromptEncoder
+
 GetBatch: itemgetter = itemgetter(0)
 GetChannel: itemgetter = itemgetter(0)
 GetHeightWidth: itemgetter = itemgetter(-2, -1)
@@ -41,6 +44,7 @@ class Vista2pt5D(nn.Module):
         image_encoder: VistaImageEncoderViT,
         prompt_encoder: VistaPromptEncoder,
         mask_decoder: MaskDecoder,
+        vae_decoder: Optional[VAEDecoder],
         pixel_mean: List[float] = [123.675, 116.28, 103.53],
         pixel_std: List[float] = [58.395, 57.12, 57.375],
     ) -> None:
@@ -60,6 +64,9 @@ class Vista2pt5D(nn.Module):
         self.image_encoder = image_encoder
         self.prompt_encoder = prompt_encoder
         self.mask_decoder = mask_decoder
+        self.vae_decoder = vae_decoder
+
+
         self.register_buffer("pixel_mean", torch.Tensor(pixel_mean).view(-1, 1, 1), False)
         self.register_buffer("pixel_std", torch.Tensor(pixel_std).view(-1, 1, 1), False)
 
@@ -188,11 +195,17 @@ class Vista2pt5D(nn.Module):
                 multimask_output=multimask_output,
             )
             if is_train:
+
+                output_pack = {
+                    "iou_predictions": iou_predictions,
+                    "low_res_logits": low_res_masks,
+                }
+
+                if self.vae_decoder is not None:
+                    vae_loss = self.vae_decoder(curr_embedding, image_record['image'])
+                    output_pack['vae_loss'] = vae_loss
                 outputs.append(
-                    {
-                        "iou_predictions": iou_predictions,
-                        "low_res_logits": low_res_masks,
-                    }
+                    output_pack
                 )
             else:
                 high_res_masks = self.postprocess_masks(
@@ -329,11 +342,20 @@ def _build_vista2pt5d(
     image_size=1024,
     clip_class_label_prompt=False,
     patch_embed_3d=False,
+    **kwargs
 ):
     prompt_embed_dim = 256
     image_size = image_size  # TODO: Shall we try to adapt model to 512x512 ?
     vit_patch_size = 16
     image_embedding_size = image_size // vit_patch_size
+    vae_decoder = None
+
+    if kwargs.get('vae', False):
+        vae_decoder = VAEDecoder(
+            in_channels=encoder_in_chans,
+            raw_image_shape=(encoder_in_chans, image_size, image_size),
+        )
+
     sam = Vista2pt5D(
         image_encoder=VistaImageEncoderViT(
             in_chans=encoder_in_chans,
@@ -370,6 +392,7 @@ def _build_vista2pt5d(
             iou_head_depth=3,
             iou_head_hidden_dim=256,
         ),
+        vae_decoder=vae_decoder,
         pixel_mean=[123.675, 116.28, 103.53],
         pixel_std=[58.395, 57.12, 57.375],
     )
@@ -404,6 +427,7 @@ def _build_vista2pt5d(
         image_encoder_params = []
         prompt_encoder_params = []
         mask_decoder_params = []
+        vae_decoder_params = []
         for name, param in sam.named_parameters():
             n_param = param.numel()
             total_params.append(n_param)
@@ -413,12 +437,15 @@ def _build_vista2pt5d(
                 prompt_encoder_params.append(n_param)
             elif name.startswith("mask_decoder"):
                 mask_decoder_params.append(n_param)
+            elif name.startswith('vae_encoder') and vae_decoder is not None:
+                vae_decoder_params.append(n_param)
 
         print(
             f"{sam.__class__.__name__} has {sum(total_params) * 1.e-6:.2f} M params, "
             f"{sum(image_encoder_params) * 1.e-6:.2f} M params in image encoder,"
             f"{sum(prompt_encoder_params) * 1.e-6:.2f} M params in prompt encoder,"
-            f"{sum(mask_decoder_params) * 1.e-6:.2f} M params in mask decoder."
+            f"{sum(mask_decoder_params) * 1.e-6:.2f} M params in mask decoder{'.' if vae_decoder is None else ','}"
+            f"{sum(vae_decoder_params) * 1.e-6:.2f} M params in vae decoder." if vae_decoder is not None else ''
         )
 
         total_trainable_params = sum(p.numel() if p.requires_grad else 0 for p in sam.parameters())
@@ -427,7 +454,7 @@ def _build_vista2pt5d(
 
 
 def build_vista2pt5d_vit_h(
-    checkpoint=None, image_size=1024, encoder_in_chans=3, clip_class_label_prompt=False, patch_embed_3d=False
+    checkpoint=None, image_size=1024, encoder_in_chans=3, clip_class_label_prompt=False, patch_embed_3d=False, **kwargs
 ):
     return _build_vista2pt5d(
         encoder_in_chans=encoder_in_chans,
@@ -439,11 +466,12 @@ def build_vista2pt5d_vit_h(
         image_size=image_size,
         clip_class_label_prompt=clip_class_label_prompt,
         patch_embed_3d=patch_embed_3d,
+        **kwargs
     )
 
 
 def build_vista2pt5d_vit_l(
-    checkpoint=None, image_size=1024, encoder_in_chans=3, clip_class_label_prompt=False, patch_embed_3d=False
+    checkpoint=None, image_size=1024, encoder_in_chans=3, clip_class_label_prompt=False, patch_embed_3d=False, **kwargs
 ):
     return _build_vista2pt5d(
         encoder_in_chans=encoder_in_chans,
@@ -455,11 +483,12 @@ def build_vista2pt5d_vit_l(
         image_size=image_size,
         clip_class_label_prompt=clip_class_label_prompt,
         patch_embed_3d=patch_embed_3d,
+        **kwargs
     )
 
 
 def build_vista2pt5d_vit_b(
-    checkpoint=None, image_size=1024, encoder_in_chans=3, clip_class_label_prompt=False, patch_embed_3d=False
+    checkpoint=None, image_size=1024, encoder_in_chans=3, clip_class_label_prompt=False, patch_embed_3d=False, **kwargs
 ):
     return _build_vista2pt5d(
         encoder_in_chans=encoder_in_chans,
@@ -471,6 +500,7 @@ def build_vista2pt5d_vit_b(
         image_size=image_size,
         clip_class_label_prompt=clip_class_label_prompt,
         patch_embed_3d=patch_embed_3d,
+        **kwargs
     )
 
 

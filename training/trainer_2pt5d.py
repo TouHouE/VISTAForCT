@@ -282,6 +282,9 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
             pred_mask = pred_mask.permute(1, 0, 2, 3)
             loss = loss_func(pred_mask, target)
 
+            loss += .1 * getattr(outputs, 'vae_loss', torch.tensor(.0, dtype=loss.type, device=loss.device))
+
+
             if skip:
                 loss = loss * 0.0
 
@@ -792,7 +795,7 @@ if __name__ == '__main__':
         skip_bk=False, sam_image_size=128, num_prompt=37, nc=11, distributed=False, label_prompt=True,
         point_prompt=True, drop_label_prob=.5, drop_point_prob=.5, max_points=11
     )
-    model = sam_model_registry['vit_b'](
+    test_model = sam_model_registry['vit_b'](
         image_size=cargs.sam_image_size,
         encoder_in_chans=81,
         patch_embed_3d=True
@@ -800,6 +803,8 @@ if __name__ == '__main__':
     B = 1
     images = torch.randn((B, 1, cargs.sam_image_size, cargs.sam_image_size, 27))
     LABELS = torch.randint(0, 11, (B, cargs.sam_image_size, cargs.sam_image_size))
-    prepare_data, target, target_org, boolean = prepare_sam_training_input(images.squeeze(), LABELS.squeeze(), cargs, model)
+    prepare_data, target, target_org, boolean = prepare_sam_training_input(
+        images.squeeze(), LABELS.squeeze(), cargs, test_model
+    )
     # print(prepare_data['image'].shape, prepare_data['labels'].shape)
     # print(target.shape)
