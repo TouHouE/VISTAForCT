@@ -352,8 +352,8 @@ def _build_vista2pt5d(
 
     if kwargs.get('vae', False):
         vae_decoder = VAEDecoder(
-            in_channels=encoder_in_chans,
-            raw_image_shape=(encoder_in_chans, image_size, image_size),
+            in_channels=256,
+            raw_image_shape=(encoder_in_chans // 3, image_size, image_size),
         )
 
     sam = Vista2pt5D(

@@ -21,7 +21,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn.parallel
 import torch.utils.data.distributed
-from monai.losses import DiceCELoss
+from monai.losses import DiceCELoss, DiceFocalLoss
 from monai.metrics import DiceMetric
 from monai.transforms import Activations, AsDiscrete, Compose
 from monai.utils import set_determinism
@@ -174,9 +174,11 @@ def main_worker(gpu, args):
         image_size=args.sam_image_size,
         encoder_in_chans=args.roi_z_iter * 3,
         patch_embed_3d=args.patch_embed_3d,
+        vae=True
     )
 
-    dice_loss = DiceCELoss(sigmoid=True)
+    # dice_loss = DiceCELoss(sigmoid=True)
+    dice_loss = DiceFocalLoss(sigmoid=True)
 
     post_label = AsDiscrete(to_onehot=args.nc)
     post_pred = Compose([Activations(sigmoid=True), AsDiscrete(threshold=0.5)])

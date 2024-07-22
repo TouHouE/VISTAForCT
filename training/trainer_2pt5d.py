@@ -282,7 +282,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
             pred_mask = pred_mask.permute(1, 0, 2, 3)
             loss = loss_func(pred_mask, target)
 
-            loss += .1 * getattr(outputs, 'vae_loss', torch.tensor(.0, dtype=loss.type, device=loss.device))
+            loss += .1 * getattr(outputs, 'vae_loss', torch.tensor(.0).cuda(args.rank))
 
 
             if skip:

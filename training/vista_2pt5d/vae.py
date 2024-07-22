@@ -41,11 +41,11 @@ class UpResBlock(nn.Module):
         )
 
     def forward(self, x):
-        ic(x.shape)
+        # ic(x.shape)
         x = self.upsample(x)
-        ic(x.shape)
+        # ic(x.shape)
         buf_x = self.block(x)
-        ic(buf_x.shape)
+        # ic(buf_x.shape)
         x += buf_x
         return x
 
@@ -123,6 +123,9 @@ class VAEDecoder(nn.Module):
         @param raw_image:
         @return:
         """
+        ic(encoded_x.shape)
+        if len(encoded_x.shape) == 3:
+            encoded_x = encoded_x.unsqueeze(0)
         encoded_x = self.down_sample(encoded_x)
         # print(f'encoded_x.shape: {encoded_x.shape}')
         restore_shape = encoded_x.shape
@@ -145,7 +148,7 @@ class VAEDecoder(nn.Module):
         flat_z = self.prefix_up_sample(flat_z)
         flat_z = self.decoder_layer(flat_z)
         pseudo_image = self.channel_aligner(flat_z)
-        ic(pseudo_image.shape)
+        # ic(pseudo_image.shape)
         loss_image = self.image_loss_func(raw_image, pseudo_image)
         loss_tot = reg_loss + loss_image
         return loss_tot
